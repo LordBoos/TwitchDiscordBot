@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  twitch-discord-bot:
+    image: ghcr.io/yourusername/twitch-discord-bot:latest  # You'll need to build and push this
+    # OR build from source if you upload the files:
+    # build: .
+    
+    container_name: twitch-discord-bot
+    restart: unless-stopped
+
+    # Environment variables - Configure these in Portainer
+    environment:
+      # Discord Bot Configuration
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - DISCORD_CLIENT_ID=${DISCORD_CLIENT_ID}
+      
+      # Twitch API Configuration  
+      - TWITCH_CLIENT_ID=${TWITCH_CLIENT_ID}
+      - TWITCH_CLIENT_SECRET=${TWITCH_CLIENT_SECRET}
+      
+      # Webhook Configuration
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
+      - WEBHOOK_PORT=8081
+      - WEBHOOK_URL=${WEBHOOK_URL}
+      
+      # Database Configuration
+      - DATABASE_PATH=./data/bot.db
+      
+      # Logging Configuration
+      - LOG_LEVEL=info
+      
+      # Anti-spam Configuration
+      - NOTIFICATION_COOLDOWN_SECONDS=30
+
+    # Port mapping for webhook server
+    ports:
+      - "8081:8081"
+
+    # Volume mounts for persistent data
+    volumes:
+      - twitch-bot-data:/app/data
+      - twitch-bot-logs:/app/logs
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+    # Network for reverse proxy if needed
+    networks:
+      - twitch-bot-network
+
+# Named volumes for data persistence
+volumes:
+  twitch-bot-data:
+    driver: local
+  twitch-bot-logs:
+    driver: local
+
+# Network configuration
+networks:
+  twitch-bot-network:
+    driver: bridge
