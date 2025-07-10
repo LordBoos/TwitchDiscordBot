@@ -12,3 +12,4 @@ docker-compose.yml
 logs/
 data/
 *.log
+portainer.env

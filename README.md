@@ -49,7 +49,9 @@ A comprehensive Discord bot that monitors Twitch streamers and clips, sending re
 - Node.js 18+ or Docker
 - Discord Bot Token and Client ID
 - Twitch Client ID and Secret
-- Public webhook URL (ngrok, domain, etc.)
+- **🌐 Public HTTPS webhook URL** (required for Twitch EventSub)
+  - Use a domain with SSL certificate, or
+  - Use ngrok for testing: `ngrok http 8081`
 
 ### 1. Clone and Setup
 ```bash
@@ -69,9 +71,9 @@ DISCORD_CLIENT_ID=your_discord_client_id_here
 TWITCH_CLIENT_ID=your_twitch_client_id_here
 TWITCH_CLIENT_SECRET=your_twitch_client_secret_here
 
-# Webhook Configuration
+# Webhook Configuration (HTTPS REQUIRED!)
 WEBHOOK_SECRET=your_webhook_secret_here
-WEBHOOK_PORT=3000
+WEBHOOK_PORT=8081
 WEBHOOK_URL=https://your-domain.com/webhook
 
 # Database Configuration
@@ -249,10 +251,38 @@ The bot features a comprehensive clip notification system that works alongside s
 3. Copy Client ID and Client Secret
 4. Set OAuth Redirect URL (not needed for this bot)
 
+### 🌐 Webhook Setup (HTTPS Required)
+
+**Twitch EventSub only accepts HTTPS webhooks.** Choose one of these options:
+
+#### Option A: Production Domain (Recommended)
+1. Use a domain with a valid SSL certificate
+2. Set `WEBHOOK_URL=https://your-domain.com/webhook`
+3. Ensure port 8081 is accessible from the internet
+
+#### Option B: Testing with ngrok
+1. Install ngrok: https://ngrok.com/download
+2. Start your bot: `npm start` or `docker-compose up`
+3. In another terminal: `ngrok http 8081`
+4. Copy the HTTPS URL: `https://abc123.ngrok.io`
+5. Set `WEBHOOK_URL=https://abc123.ngrok.io/webhook`
+6. Restart the bot with the new URL
+
+#### Option C: Reverse Proxy (Advanced)
+- Use nginx, Cloudflare Tunnel, or similar
+- Ensure HTTPS termination and proper forwarding
+
 ### Webhook Configuration
-- **WEBHOOK_URL**: Must be publicly accessible (use ngrok for testing)
-- **WEBHOOK_SECRET**: Generate a secure random string
-- **WEBHOOK_PORT**: Port for the Express server (default: 3000)
+
+⚠️ **CRITICAL**: Twitch EventSub requires HTTPS webhooks. HTTP will not work!
+
+- **WEBHOOK_URL**: Must be publicly accessible via HTTPS
+  - ✅ Production: `https://your-domain.com/webhook` (with valid SSL certificate)
+  - ✅ Testing: Use ngrok: `ngrok http 8081` → `https://abc123.ngrok.io/webhook`
+  - ❌ HTTP URLs will be rejected by Twitch
+  - ❌ Localhost/private IPs will not work
+- **WEBHOOK_SECRET**: Generate a secure random string (64+ characters)
+- **WEBHOOK_PORT**: Port for the Express server (default: 8081)
 
 ## 📊 Database Schema
 
@@ -287,9 +317,10 @@ The bot uses SQLite with automatic migrations and the following tables:
 - Check logs for command deployment success messages
 
 **Webhook verification failing:**
-- Ensure `WEBHOOK_URL` is publicly accessible
+- Ensure `WEBHOOK_URL` is publicly accessible via **HTTPS** (not HTTP)
+- Verify SSL certificate is valid (test with `curl -I https://your-domain.com/webhook`)
 - Check `WEBHOOK_SECRET` matches Twitch EventSub configuration
-- Verify SSL certificate if using HTTPS
+- For ngrok: ensure you're using the HTTPS URL, not HTTP
 
 **Twitch API errors:**
 - Check `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET`
