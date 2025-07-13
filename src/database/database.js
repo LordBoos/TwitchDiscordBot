@@ -201,6 +201,30 @@ class Database {
                     }
                 });
 
+                // Check if clip_discord_messages table has clip_title column
+                this.db.all("PRAGMA table_info(clip_discord_messages)", (err6, clipDiscordMessagesTableInfo) => {
+                    if (err6) {
+                        logger.error('Error checking clip_discord_messages table info:', err6);
+                        return;
+                    }
+
+                    if (clipDiscordMessagesTableInfo && clipDiscordMessagesTableInfo.length > 0) {
+                        const clipDiscordMessagesColumnNames = clipDiscordMessagesTableInfo.map(col => col.name);
+
+                        if (!clipDiscordMessagesColumnNames.includes('clip_title')) {
+                            logger.info('Running migration: Adding clip_title column to clip_discord_messages');
+
+                            this.db.run("ALTER TABLE clip_discord_messages ADD COLUMN clip_title TEXT", (migrationErr) => {
+                                if (migrationErr) {
+                                    logger.error('Migration failed for clip_title:', migrationErr);
+                                } else {
+                                    logger.info('Migration completed: clip_title column added');
+                                }
+                            });
+                        }
+                    }
+                });
+
             });
         } catch (error) {
             logger.error('Migration check failed:', error);

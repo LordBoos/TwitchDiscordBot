@@ -231,11 +231,28 @@ class TwitchDiscordBot {
                 if (content) {
                     messageOptions.content = content;
                 }
-                await channel.send(messageOptions);
+                const message = await channel.send(messageOptions);
                 logger.info(`Notification sent to channel ${channelId}`);
+                return message;
             }
         } catch (error) {
             logger.error(`Failed to send notification to channel ${channelId}:`, error);
+        }
+    }
+
+    // Method to edit Discord messages
+    async editMessage(channelId, messageId, newContent) {
+        try {
+            const channel = await this.client.channels.fetch(channelId);
+            if (channel) {
+                const message = await channel.messages.fetch(messageId);
+                await message.edit(newContent);
+                logger.info(`Message ${messageId} edited in channel ${channelId}`);
+                return true;
+            }
+        } catch (error) {
+            logger.error(`Failed to edit message ${messageId} in channel ${channelId}:`, error);
+            return false;
         }
     }
 }

@@ -453,6 +453,16 @@ class TwitchAPI {
         );
     }
 
+    async getClipById(clipId) {
+        try {
+            const response = await this.makeAPIRequest('/clips', { id: clipId });
+            return response.data[0] || null;
+        } catch (error) {
+            logger.error(`Failed to get clip ${clipId}:`, error);
+            return null;
+        }
+    }
+
     async subscribeToClipDeletion(userId, streamerName) {
         // Check if we already have a subscription for this streamer
         const existingSubscription = await this.models.getEventSubSubscription(`${streamerName}_clip_delete`);

@@ -105,6 +105,7 @@ CREATE TABLE IF NOT EXISTS clip_discord_messages (
     channel_id TEXT NOT NULL,
     message_id TEXT NOT NULL,
     streamer_name TEXT NOT NULL,
+    clip_title TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(clip_id, channel_id)
 );

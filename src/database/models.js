@@ -241,13 +241,13 @@ class Models {
     }
 
     // Clip Discord message tracking operations
-    async addClipDiscordMessage(clipId, channelId, messageId, streamerName) {
+    async addClipDiscordMessage(clipId, channelId, messageId, streamerName, clipTitle = null) {
         const sql = `
             INSERT OR REPLACE INTO clip_discord_messages
-            (clip_id, channel_id, message_id, streamer_name)
-            VALUES (?, ?, ?, ?)
+            (clip_id, channel_id, message_id, streamer_name, clip_title)
+            VALUES (?, ?, ?, ?, ?)
         `;
-        return await this.db.run(sql, [clipId, channelId, messageId, streamerName]);
+        return await this.db.run(sql, [clipId, channelId, messageId, streamerName, clipTitle]);
     }
 
     async getClipDiscordMessages(clipId) {
@@ -272,6 +272,24 @@ class Models {
             WHERE clip_id = ?
         `;
         return await this.db.run(sql, [clipId]);
+    }
+
+    async updateClipTitle(clipId, newTitle) {
+        const sql = `
+            UPDATE clip_discord_messages
+            SET clip_title = ?
+            WHERE clip_id = ?
+        `;
+        return await this.db.run(sql, [newTitle, clipId]);
+    }
+
+    async getClipsByTitle(streamerName) {
+        const sql = `
+            SELECT DISTINCT clip_id, clip_title
+            FROM clip_discord_messages
+            WHERE streamer_name = ? AND clip_title IS NOT NULL
+        `;
+        return await this.db.all(sql, [streamerName]);
     }
 
     // Cleanup operations

@@ -128,6 +128,9 @@ class ClipPollingService {
             const newestClip = newClips[newClips.length - 1];
             await this.models.updateLastClipTime(streamerName, new Date(newestClip.created_at));
 
+            // Check for clip title changes in all recent clips
+            await this.checkClipTitleChanges(streamerName, recentClips);
+
         } catch (error) {
             logger.error(`Error checking clips for ${streamerName}:`, error);
         }
@@ -252,6 +255,80 @@ class ClipPollingService {
 
         } catch (error) {
             logger.error(`Error handling clip deletion for ${clipId}:`, error);
+        }
+    }
+
+    async checkClipTitleChanges(streamerName, currentClips) {
+        try {
+            // Get stored clips with titles from database
+            const storedClips = await this.models.getClipsByTitle(streamerName);
+
+            if (storedClips.length === 0) {
+                return; // No stored clips to compare
+            }
+
+            // Check each current clip against stored titles
+            for (const currentClip of currentClips) {
+                const storedClip = storedClips.find(stored => stored.clip_id === currentClip.id);
+
+                if (storedClip && storedClip.clip_title !== currentClip.title) {
+                    logger.info(`📝 Clip title changed: "${storedClip.clip_title}" → "${currentClip.title}"`);
+                    await this.handleClipTitleChange(currentClip.id, currentClip.title, storedClip.clip_title);
+                }
+            }
+
+        } catch (error) {
+            logger.error(`Error checking clip title changes for ${streamerName}:`, error);
+        }
+    }
+
+    async handleClipTitleChange(clipId, newTitle, oldTitle) {
+        try {
+            // Update the stored title
+            await this.models.updateClipTitle(clipId, newTitle);
+
+            // Get all Discord messages for this clip
+            const discordMessages = await this.models.getClipDiscordMessages(clipId);
+
+            // Update each Discord message
+            for (const messageRecord of discordMessages) {
+                try {
+                    // Get the clip template for this guild
+                    const template = await this.models.getClipNotificationTemplate(messageRecord.channel_id);
+                    const messageTemplate = template?.message_template || '{creator} just created a new clip on {streamer} channel\n{title}\n{url}';
+
+                    // Get current clip data to rebuild the message
+                    const clipData = await this.twitchAPI.getClipById(clipId);
+                    if (!clipData) {
+                        logger.warn(`Could not fetch clip data for ${clipId} to update message`);
+                        continue;
+                    }
+
+                    // Template variables for replacement
+                    const variables = {
+                        '{creator}': clipData.creator_name || 'Unknown',
+                        '{streamer}': clipData.broadcaster_name || 'Unknown',
+                        '{title}': newTitle,
+                        '{url}': clipData.url || ''
+                    };
+
+                    // Replace variables in template
+                    let newMessage = messageTemplate;
+                    Object.entries(variables).forEach(([placeholder, value]) => {
+                        newMessage = newMessage.replace(new RegExp(placeholder.replace(/[{}]/g, '\\$&'), 'g'), value);
+                    });
+
+                    // Update the Discord message
+                    await this.discordBot.editMessage(messageRecord.channel_id, messageRecord.message_id, newMessage);
+                    logger.info(`✅ Updated Discord message for clip title change: ${clipId}`);
+
+                } catch (editError) {
+                    logger.error(`Failed to update Discord message ${messageRecord.message_id} for clip ${clipId}:`, editError);
+                }
+            }
+
+        } catch (error) {
+            logger.error(`Error handling clip title change for ${clipId}:`, error);
         }
     }
 }

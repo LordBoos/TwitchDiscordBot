@@ -16,6 +16,10 @@ class NotificationHandler {
         logger.info(`${event.broadcaster_user_name} went live`);
         logger.info(`EventSub data: category_id=${event.category_id}, category_name=${event.category_name}`);
 
+        // Wait 5 seconds to allow stream preview image to be ready
+        logger.info(`Waiting 5 seconds for stream preview image to be ready...`);
+        await new Promise(resolve => setTimeout(resolve, 5000));
+
         try {
             // Get all channels following this streamer
             const follows = await this.models.getAllFollowsForStreamer(streamerName);
@@ -204,8 +208,14 @@ class NotificationHandler {
             const streamPreviewUrl = streamData.thumbnail_url
                 .replace('{width}', '1920')
                 .replace('{height}', '1080');
-            embed.setImage(streamPreviewUrl);
-            logger.info(`Added stream preview as main image: ${streamPreviewUrl}`);
+
+            // Add random parameter to preserve multiple image previews on Discord
+            const randomNum = Math.floor(Math.random() * (100000 - 100 + 1)) + 100;
+            const timestamp = Math.floor(Date.now() / 1000);
+            const urlWithParam = `${streamPreviewUrl}?${randomNum}=${timestamp}`;
+
+            embed.setImage(urlWithParam);
+            logger.info(`Added stream preview as main image: ${urlWithParam}`);
         }
 
         // Add profile picture as thumbnail (small image on the right side)
@@ -293,12 +303,13 @@ class NotificationHandler {
                         content: messageContent
                     });
 
-                    // Track the Discord message for potential deletion
+                    // Track the Discord message for potential deletion and title updates
                     await this.models.addClipDiscordMessage(
                         event.id,
                         follow.channel_id,
                         message.id,
-                        follow.streamer_name
+                        follow.streamer_name,
+                        event.title || 'Untitled Clip'
                     );
 
                     logger.info(`Sent clip notification for ${follow.streamer_name} to channel ${follow.channel_id} (message: ${message.id})`);
