@@ -319,7 +319,7 @@ class ClipPollingService {
                     });
 
                     // Update the Discord message
-                    await this.discordBot.editMessage(messageRecord.channel_id, messageRecord.message_id, newMessage);
+                    await this.notificationHandler.discordBot.editMessage(messageRecord.channel_id, messageRecord.message_id, newMessage);
                     logger.info(`✅ Updated Discord message for clip title change: ${clipId}`);
 
                 } catch (editError) {

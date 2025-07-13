@@ -21,6 +21,17 @@ class NotificationHandler {
         await new Promise(resolve => setTimeout(resolve, 5000));
 
         try {
+            // First, verify the stream is actually online to prevent false notifications
+            logger.info(`Verifying stream status for ${streamerName}...`);
+            const streamVerification = await this.twitchAPI.getStreamByUserId(streamerId);
+
+            if (!streamVerification) {
+                logger.warn(`Stream verification failed: ${streamerName} is not currently online, ignoring notification`);
+                return;
+            }
+
+            logger.info(`Stream verification passed: ${streamerName} is confirmed online`);
+
             // Get all channels following this streamer
             const follows = await this.models.getAllFollowsForStreamer(streamerName);
 
