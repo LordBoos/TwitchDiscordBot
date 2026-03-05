@@ -355,6 +355,112 @@ class NotificationHandler {
         return message;
     }
 
+    // =========================================================================
+    // Kick notification methods
+    // =========================================================================
+
+    async handleKickStreamOnline(slug, livestream) {
+        const follows = await this.models.getAllKickFollowsForStreamer(slug);
+
+        if (follows.length === 0) {
+            logger.warn(`Kick: no channels following ${slug}, ignoring notification`);
+            return;
+        }
+
+        logger.info(`Kick: sending live notification for ${slug} to ${follows.length} channel(s)`);
+
+        const notifications = follows.map(follow =>
+            this.sendKickChannelNotification(follow.channel_id, follow.guild_id, slug, livestream)
+        );
+        await Promise.allSettled(notifications);
+    }
+
+    async sendKickChannelNotification(channelId, guildId, slug, livestream) {
+        try {
+            const cooldownSeconds = parseInt(process.env.KICK_NOTIFICATION_COOLDOWN_SECONDS) || 300;
+            const onCooldown = await this.models.isKickNotificationOnCooldown(channelId, slug, cooldownSeconds);
+            if (onCooldown) {
+                logger.info(`Kick notification for ${slug} in channel ${channelId} is on cooldown`);
+                return;
+            }
+
+            const embed = this.createKickStreamEmbed(slug, livestream);
+            await this.discordBot.sendNotification(channelId, embed, '');
+            await this.models.updateKickNotificationCooldown(channelId, slug);
+
+            logger.info(`Sent Kick notification for ${slug} to channel ${channelId}`);
+        } catch (error) {
+            logger.error(`Failed to send Kick notification for ${slug} to channel ${channelId}:`, error);
+        }
+    }
+
+    createKickStreamEmbed(slug, livestream) {
+        const streamerName = livestream.user?.username || slug;
+        const streamTitle  = livestream.session_title || 'Live Stream';
+        const streamUrl    = `https://kick.com/${slug}`;
+        const category     = livestream.categories?.[0]?.name || null;
+        const viewers      = livestream.viewer_count ?? null;
+        const profilePic   = livestream.user?.profile_pic || null;
+
+        const embed = new EmbedBuilder()
+            .setTitle(`🟢 ${streamerName} is now live on Kick!`)
+            .setURL(streamUrl)
+            .setColor(0x53FC18) // Kick green
+            .setDescription(`**${streamTitle}**`)
+            .setTimestamp();
+
+        if (profilePic) embed.setThumbnail(profilePic);
+
+        const fields = [];
+        if (category) {
+            fields.push({ name: '🎮 Category', value: category, inline: true });
+        }
+        if (viewers !== null) {
+            fields.push({ name: '👥 Viewers', value: viewers.toLocaleString(), inline: true });
+        }
+        fields.push({
+            name: '📺 Watch',
+            value: `[Open Stream](${streamUrl})`,
+            inline: true,
+        });
+
+        embed.addFields(fields);
+        return embed;
+    }
+
+    async handleKickClipCreated(slug, clip) {
+        const clipFollows = await this.models.getKickClipFollowsForStreamer(slug);
+        if (clipFollows.length === 0) return;
+
+        // Build clip URL – try known fields then fall back to channel page
+        const clipUrl = clip.clip_url || clip.url ||
+            (clip.video_url) ||
+            `https://kick.com/${slug}?clip=${clip.id}`;
+
+        const creatorName = clip.creator?.username || clip.created_by?.username || slug;
+        const clipTitle   = clip.title || 'Untitled Clip';
+
+        for (const follow of clipFollows) {
+            try {
+                const message = `**${creatorName}** just created a new clip on **${slug}**\n**${clipTitle}**\n${clipUrl}`;
+
+                const channel = await this.discordBot.client.channels.fetch(follow.channel_id);
+                if (channel) {
+                    const msg = await channel.send({ content: message });
+                    await this.models.addKickClipDiscordMessage(
+                        clip.id.toString(),
+                        follow.channel_id,
+                        msg.id,
+                        slug
+                    );
+                    logger.info(`Sent Kick clip notification for ${slug} to channel ${follow.channel_id}`);
+                }
+            } catch (error) {
+                logger.error(`Failed to send Kick clip notification to channel ${follow.channel_id}:`, error);
+            }
+        }
+    }
+
     async handleClipDeleted(event) {
         logger.info(`${event.broadcaster_user_name} deleted a clip: ${event.id}`);
 

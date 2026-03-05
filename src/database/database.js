@@ -226,6 +226,46 @@ class Database {
                 });
 
             });
+                // ---- Kick tables migration ----
+                // Create all Kick tables if they don't already exist (the schema.sql
+                // handles new installs; this migration covers existing databases).
+                const kickTables = [
+                    'kick_channel_follows',
+                    'kick_clip_follows',
+                    'kick_eventsub_subscriptions',
+                    'kick_tokens',
+                    'kick_clip_polling_state',
+                    'kick_stream_polling_state',
+                    'kick_notification_cooldowns',
+                    'kick_clip_discord_messages',
+                ];
+
+                this.db.all(
+                    `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'kick_%'`,
+                    (kickErr, existingKickTables) => {
+                        if (kickErr) {
+                            logger.error('Error checking Kick tables:', kickErr);
+                            return;
+                        }
+                        const existing = new Set((existingKickTables || []).map(r => r.name));
+                        const missing = kickTables.filter(t => !existing.has(t));
+
+                        if (missing.length > 0) {
+                            logger.info(`Running migration: creating missing Kick tables: ${missing.join(', ')}`);
+                            // Re-run the full schema to create any missing tables (IF NOT EXISTS guards prevent duplication)
+                            const schemaPath = require('path').join(__dirname, 'schema.sql');
+                            const schema = require('fs').readFileSync(schemaPath, 'utf8');
+                            this.db.exec(schema, (schemaErr) => {
+                                if (schemaErr) {
+                                    logger.error('Kick table migration failed:', schemaErr);
+                                } else {
+                                    logger.info('Kick table migration completed successfully');
+                                }
+                            });
+                        }
+                    }
+                );
+
         } catch (error) {
             logger.error('Migration check failed:', error);
         }

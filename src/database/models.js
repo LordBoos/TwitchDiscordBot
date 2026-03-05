@@ -334,6 +334,247 @@ class Models {
     async close() {
         return await this.db.close();
     }
+
+    // =========================================================================
+    // Kick channel follow operations
+    // =========================================================================
+
+    async addKickChannelFollow(guildId, channelId, streamerSlug, broadcasterUserId = null) {
+        const sql = `
+            INSERT OR IGNORE INTO kick_channel_follows
+            (guild_id, channel_id, streamer_slug, broadcaster_user_id)
+            VALUES (?, ?, ?, ?)
+        `;
+        return await this.db.run(sql, [guildId, channelId, streamerSlug.toLowerCase(), broadcasterUserId]);
+    }
+
+    async removeKickChannelFollow(channelId, streamerSlug) {
+        const sql = `
+            DELETE FROM kick_channel_follows
+            WHERE channel_id = ? AND streamer_slug = ?
+        `;
+        return await this.db.run(sql, [channelId, streamerSlug.toLowerCase()]);
+    }
+
+    async getKickChannelFollows(channelId) {
+        const sql = `
+            SELECT * FROM kick_channel_follows
+            WHERE channel_id = ?
+            ORDER BY streamer_slug
+        `;
+        return await this.db.all(sql, [channelId]);
+    }
+
+    async getAllKickChannelFollows() {
+        const sql = `SELECT * FROM kick_channel_follows ORDER BY streamer_slug`;
+        return await this.db.all(sql);
+    }
+
+    async getAllKickFollowsForStreamer(streamerSlug) {
+        const sql = `
+            SELECT * FROM kick_channel_follows
+            WHERE streamer_slug = ?
+        `;
+        return await this.db.all(sql, [streamerSlug.toLowerCase()]);
+    }
+
+    async getKickChannelFollow(channelId, streamerSlug) {
+        const sql = `
+            SELECT * FROM kick_channel_follows
+            WHERE channel_id = ? AND streamer_slug = ?
+        `;
+        return await this.db.get(sql, [channelId, streamerSlug.toLowerCase()]);
+    }
+
+    // =========================================================================
+    // Kick clip follow operations
+    // =========================================================================
+
+    async addKickClipFollow(guildId, channelId, streamerSlug) {
+        const sql = `
+            INSERT OR IGNORE INTO kick_clip_follows
+            (guild_id, channel_id, streamer_slug)
+            VALUES (?, ?, ?)
+        `;
+        return await this.db.run(sql, [guildId, channelId, streamerSlug.toLowerCase()]);
+    }
+
+    async removeKickClipFollow(channelId, streamerSlug) {
+        const sql = `
+            DELETE FROM kick_clip_follows
+            WHERE channel_id = ? AND streamer_slug = ?
+        `;
+        return await this.db.run(sql, [channelId, streamerSlug.toLowerCase()]);
+    }
+
+    async getKickClipFollows(channelId) {
+        const sql = `
+            SELECT * FROM kick_clip_follows
+            WHERE channel_id = ?
+            ORDER BY streamer_slug
+        `;
+        return await this.db.all(sql, [channelId]);
+    }
+
+    async getAllKickClipFollows() {
+        const sql = `SELECT * FROM kick_clip_follows ORDER BY streamer_slug`;
+        return await this.db.all(sql);
+    }
+
+    async getKickClipFollowsForStreamer(streamerSlug) {
+        const sql = `
+            SELECT * FROM kick_clip_follows
+            WHERE streamer_slug = ?
+        `;
+        return await this.db.all(sql, [streamerSlug.toLowerCase()]);
+    }
+
+    // =========================================================================
+    // Kick EventSub subscription operations
+    // =========================================================================
+
+    async addKickEventSubSubscription(subscriptionId, streamerSlug, broadcasterUserId, eventType = 'livestream.status.updated') {
+        const sql = `
+            INSERT OR REPLACE INTO kick_eventsub_subscriptions
+            (subscription_id, streamer_slug, broadcaster_user_id, event_type)
+            VALUES (?, ?, ?, ?)
+        `;
+        return await this.db.run(sql, [subscriptionId, streamerSlug.toLowerCase(), broadcasterUserId, eventType]);
+    }
+
+    async getKickEventSubSubscription(streamerSlug, eventType = 'livestream.status.updated') {
+        const sql = `
+            SELECT * FROM kick_eventsub_subscriptions
+            WHERE streamer_slug = ? AND event_type = ?
+        `;
+        return await this.db.get(sql, [streamerSlug.toLowerCase(), eventType]);
+    }
+
+    async removeKickEventSubSubscription(streamerSlug, eventType = 'livestream.status.updated') {
+        const sql = `
+            DELETE FROM kick_eventsub_subscriptions
+            WHERE streamer_slug = ? AND event_type = ?
+        `;
+        return await this.db.run(sql, [streamerSlug.toLowerCase(), eventType]);
+    }
+
+    async getAllKickEventSubSubscriptions() {
+        const sql = `SELECT * FROM kick_eventsub_subscriptions`;
+        return await this.db.all(sql);
+    }
+
+    // =========================================================================
+    // Kick token operations
+    // =========================================================================
+
+    async saveKickToken(accessToken, expiresAt) {
+        const sql = `
+            INSERT OR REPLACE INTO kick_tokens
+            (id, access_token, expires_at, updated_at)
+            VALUES (1, ?, ?, CURRENT_TIMESTAMP)
+        `;
+        return await this.db.run(sql, [accessToken, expiresAt.toISOString()]);
+    }
+
+    async getKickToken() {
+        const sql = `SELECT * FROM kick_tokens WHERE id = 1`;
+        return await this.db.get(sql);
+    }
+
+    // =========================================================================
+    // Kick clip polling state
+    // =========================================================================
+
+    async getKickClipPollingState(streamerSlug) {
+        const sql = `
+            SELECT * FROM kick_clip_polling_state
+            WHERE streamer_slug = ?
+        `;
+        return await this.db.get(sql, [streamerSlug.toLowerCase()]);
+    }
+
+    async setKickClipPollingState(streamerSlug, lastClipId) {
+        const sql = `
+            INSERT OR REPLACE INTO kick_clip_polling_state
+            (streamer_slug, last_clip_id, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+        `;
+        return await this.db.run(sql, [streamerSlug.toLowerCase(), lastClipId]);
+    }
+
+    async removeKickClipPollingState(streamerSlug) {
+        const sql = `DELETE FROM kick_clip_polling_state WHERE streamer_slug = ?`;
+        return await this.db.run(sql, [streamerSlug.toLowerCase()]);
+    }
+
+    // =========================================================================
+    // Kick stream polling state (live/offline tracking)
+    // =========================================================================
+
+    async getKickStreamState(streamerSlug) {
+        const sql = `
+            SELECT * FROM kick_stream_polling_state
+            WHERE streamer_slug = ?
+        `;
+        return await this.db.get(sql, [streamerSlug.toLowerCase()]);
+    }
+
+    async setKickStreamState(streamerSlug, isLive) {
+        const sql = `
+            INSERT OR REPLACE INTO kick_stream_polling_state
+            (streamer_slug, is_live, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+        `;
+        return await this.db.run(sql, [streamerSlug.toLowerCase(), isLive ? 1 : 0]);
+    }
+
+    // =========================================================================
+    // Kick notification cooldowns
+    // =========================================================================
+
+    async isKickNotificationOnCooldown(channelId, streamerSlug, cooldownSeconds) {
+        const sql = `
+            SELECT last_notification FROM kick_notification_cooldowns
+            WHERE channel_id = ? AND streamer_slug = ?
+        `;
+        const result = await this.db.get(sql, [channelId, streamerSlug.toLowerCase()]);
+        if (!result) return false;
+
+        const timeDiff = (new Date() - new Date(result.last_notification)) / 1000;
+        return timeDiff < cooldownSeconds;
+    }
+
+    async updateKickNotificationCooldown(channelId, streamerSlug) {
+        const sql = `
+            INSERT OR REPLACE INTO kick_notification_cooldowns
+            (channel_id, streamer_slug, last_notification)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+        `;
+        return await this.db.run(sql, [channelId, streamerSlug.toLowerCase()]);
+    }
+
+    // =========================================================================
+    // Kick clip Discord message tracking
+    // =========================================================================
+
+    async addKickClipDiscordMessage(clipId, channelId, messageId, streamerSlug) {
+        const sql = `
+            INSERT OR REPLACE INTO kick_clip_discord_messages
+            (clip_id, channel_id, message_id, streamer_slug)
+            VALUES (?, ?, ?, ?)
+        `;
+        return await this.db.run(sql, [clipId, channelId, messageId, streamerSlug.toLowerCase()]);
+    }
+
+    async getKickClipDiscordMessages(clipId) {
+        const sql = `SELECT * FROM kick_clip_discord_messages WHERE clip_id = ?`;
+        return await this.db.all(sql, [clipId]);
+    }
+
+    async removeKickClipDiscordMessages(clipId) {
+        const sql = `DELETE FROM kick_clip_discord_messages WHERE clip_id = ?`;
+        return await this.db.run(sql, [clipId]);
+    }
 }
 
 module.exports = Models;
