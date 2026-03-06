@@ -242,32 +242,20 @@ class KickAPI {
     }
 
     // Official API: subscribe to livestream.status.updated event
+    // Note: webhook URL is NOT sent per-request — it must be pre-registered in the
+    // Kick developer portal under your app settings.
     async subscribeToLivestreamStatus(broadcasterId) {
         if (!this.hasCredentials) throw new Error('No Kick credentials configured');
         await this.ensureToken();
 
-        // KICK_WEBHOOK_URL takes priority; otherwise derive from WEBHOOK_URL by extracting
-        // just the origin (e.g. https://example.com) so the path becomes /kick-webhook,
-        // not /webhook/kick-webhook (WEBHOOK_URL includes the /webhook path for Twitch).
-        let webhookUrl = process.env.KICK_WEBHOOK_URL || null;
-        if (!webhookUrl && process.env.WEBHOOK_URL) {
-            try {
-                webhookUrl = `${new URL(process.env.WEBHOOK_URL).origin}/kick-webhook`;
-            } catch {
-                // WEBHOOK_URL is not a valid URL
-            }
-        }
-
-        if (!webhookUrl) throw new Error('No KICK_WEBHOOK_URL or WEBHOOK_URL configured');
-
-        // Kick API has used both 'event' and 'event_name' in different versions of their docs;
-        // broadcaster_user_id must be an integer
         const body = {
-            event_name: 'livestream.status.updated',
+            events: [
+                { name: 'livestream.status.updated', version: 1 },
+            ],
             broadcaster_user_id: Number(broadcasterId),
-            webhook_url: webhookUrl,
+            method: 'webhook',
         };
-        logger.info(`Kick: subscribing to ${body.event_name} for broadcaster ${body.broadcaster_user_id} → ${webhookUrl}`);
+        logger.info(`Kick: subscribing to livestream.status.updated for broadcaster ${body.broadcaster_user_id}`);
         const response = await axios.post(
             `${this.publicApiBase}/events/subscriptions`,
             body,
