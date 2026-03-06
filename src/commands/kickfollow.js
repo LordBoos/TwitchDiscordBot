@@ -32,6 +32,7 @@ module.exports = {
 
             const broadcasterUserId = channel.user?.id || channel.id || null;
             const displayName = channel.user?.username || slug;
+            const unverified = channel._unverified === true;
 
             // Check for existing follow in this Discord channel
             const existing = await models.getKickChannelFollow(interaction.channelId, slug);
@@ -47,8 +48,8 @@ module.exports = {
                 broadcasterUserId
             );
 
-            // If official Kick credentials are configured, subscribe to the webhook
-            if (kickAPI.hasCredentials) {
+            // If official Kick credentials are configured and we have a user ID, subscribe to the webhook
+            if (kickAPI.hasCredentials && broadcasterUserId) {
                 const existingSub = await models.getKickEventSubSubscription(slug);
                 if (!existingSub) {
                     try {
@@ -64,9 +65,17 @@ module.exports = {
                 }
             }
 
-            logger.info(`Kick follow added: ${slug} → channel ${interaction.channelId}`);
+            logger.info(`Kick follow added: ${slug} → channel ${interaction.channelId}${unverified ? ' (unverified)' : ''}`);
 
-            const modeNote = kickAPI.hasCredentials
+            if (unverified) {
+                return interaction.editReply(
+                    `✅ Now following **[${slug}](https://kick.com/${slug})** on Kick in this channel!\n` +
+                    `⚠️ *Could not verify the channel exists (Kick API temporarily unavailable). ` +
+                    `Notifications will use polling. If the slug is wrong, use \`/kickunfollow\` to remove it.*`
+                );
+            }
+
+            const modeNote = (kickAPI.hasCredentials && broadcasterUserId)
                 ? 'Live notifications delivered via Kick webhooks.'
                 : 'Live notifications delivered via polling (every 2 min). Add `KICK_CLIENT_ID`/`KICK_CLIENT_SECRET` for instant webhooks.';
 
