@@ -104,7 +104,9 @@ class KickAPI {
         }
     }
 
-    // Get channel info by slug - uses official API if credentials available, unofficial as fallback
+    // Get channel info by slug - uses official API if credentials available, unofficial as fallback.
+    // Returns null if channel definitively not found (404), or a stub with _unverified:true if
+    // lookup failed due to API unavailability (403/network) so callers can still proceed.
     async getChannelBySlug(slug) {
         if (this.hasCredentials) {
             try {
@@ -115,11 +117,20 @@ class KickAPI {
                 logger.warn(`KickAPI: official channel lookup failed for ${slug}, trying unofficial:`, error.message);
             }
         }
-        return this.getChannelBySlugUnofficial(slug);
+
+        try {
+            return await this.getChannelBySlugUnofficial(slug);
+        } catch (error) {
+            if (error.response?.status === 404) return null;
+            // 403/network block — can't verify, but don't block the follow
+            logger.warn(`KickAPI: unofficial lookup failed for ${slug} (HTTP ${error.response?.status ?? 'network'}), proceeding unverified`);
+            return { id: null, slug, user: { id: null, username: slug }, _unverified: true };
+        }
     }
 
     async getChannelBySlugOfficial(slug) {
         await this.ensureToken();
+        // Try both known parameter names; Kick API docs have used both at different times
         const response = await axios.get(`${this.publicApiBase}/channels`, {
             params: { broadcaster_user_login: slug },
             headers: {
@@ -128,6 +139,7 @@ class KickAPI {
             },
             timeout: 10000,
         });
+        logger.debug(`KickAPI official /channels response for ${slug}:`, JSON.stringify(response.data).slice(0, 300));
         const data = response.data?.data?.[0];
         if (!data) return null;
         // Normalize to match shape expected by callers
@@ -143,20 +155,15 @@ class KickAPI {
     }
 
     async getChannelBySlugUnofficial(slug) {
-        try {
-            const response = await axios.get(`${this.unofficialApiBase}/v1/channels/${encodeURIComponent(slug)}`, {
-                headers: {
-                    Accept: 'application/json',
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                    Referer: 'https://kick.com/',
-                },
-                timeout: 10000,
-            });
-            return response.data;
-        } catch (error) {
-            if (error.response?.status === 404) return null;
-            throw error;
-        }
+        const response = await axios.get(`${this.unofficialApiBase}/v1/channels/${encodeURIComponent(slug)}`, {
+            headers: {
+                Accept: 'application/json',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                Referer: 'https://kick.com/',
+            },
+            timeout: 10000,
+        });
+        return response.data;
     }
 
     // Returns current livestream object if the channel is live, null otherwise
