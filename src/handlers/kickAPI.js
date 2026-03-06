@@ -108,7 +108,9 @@ class KickAPI {
     async getChannelBySlug(slug) {
         if (this.hasCredentials) {
             try {
-                return await this.getChannelBySlugOfficial(slug);
+                const result = await this.getChannelBySlugOfficial(slug);
+                if (result) return result;
+                logger.warn(`KickAPI: official channel lookup returned null for ${slug}, trying unofficial`);
             } catch (error) {
                 logger.warn(`KickAPI: official channel lookup failed for ${slug}, trying unofficial:`, error.message);
             }
