@@ -130,36 +130,25 @@ class KickAPI {
 
     async getChannelBySlugOfficial(slug) {
         await this.ensureToken();
-        // Try slug-based lookup; Kick API has used different param names in different versions
-        // so we try the most likely candidates in sequence
-        const paramCandidates = [
-            { slug },
-            { broadcaster_user_login: slug },
-        ];
-        for (const params of paramCandidates) {
-            const response = await axios.get(`${this.publicApiBase}/channels`, {
-                params,
-                headers: {
-                    Authorization: `Bearer ${this.accessToken}`,
-                    Accept: 'application/json',
-                },
-                timeout: 10000,
-            });
-            logger.info(`KickAPI /channels (${JSON.stringify(params)}) status=${response.status} data=${JSON.stringify(response.data).slice(0, 300)}`);
-            const data = response.data?.data?.[0];
-            if (data) {
-                return {
-                    id: data.broadcaster_user_id,
-                    slug: data.broadcaster_user_login ?? slug,
-                    user: {
-                        id: data.broadcaster_user_id,
-                        username: data.broadcaster_user_name ?? slug,
-                    },
-                    livestream: null,
-                };
-            }
-        }
-        return null;
+        const response = await axios.get(`${this.publicApiBase}/channels`, {
+            params: { slug },
+            headers: {
+                Authorization: `Bearer ${this.accessToken}`,
+                Accept: 'application/json',
+            },
+            timeout: 10000,
+        });
+        const data = response.data?.data?.[0];
+        if (!data) return null;
+        return {
+            id: data.broadcaster_user_id,
+            slug: data.slug ?? slug,
+            user: {
+                id: data.broadcaster_user_id,
+                username: data.broadcaster_user_name ?? data.slug ?? slug,
+            },
+            livestream: null,
+        };
     }
 
     async getChannelBySlugUnofficial(slug) {
@@ -202,7 +191,10 @@ class KickAPI {
             });
             return response.data?.clips || [];
         } catch (error) {
-            logger.error(`Error fetching Kick clips for ${slug}:`, error.message);
+            const detail = error.response
+                ? `HTTP ${error.response.status}`
+                : error.message;
+            logger.error(`Error fetching Kick clips for ${slug}: ${detail}`);
             return [];
         }
     }

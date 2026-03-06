@@ -60,7 +60,10 @@ module.exports = {
                             logger.info(`Kick: created livestream.status.updated subscription for ${slug}`);
                         }
                     } catch (subError) {
-                        logger.warn(`Kick: could not create webhook subscription for ${slug} (will use polling):`, subError.message);
+                        const detail = subError.response
+                            ? `HTTP ${subError.response.status}: ${JSON.stringify(subError.response.data)}`
+                            : subError.message;
+                        logger.warn(`Kick: could not create webhook subscription for ${slug} (will use polling): ${detail}`);
                     }
                 }
             }
