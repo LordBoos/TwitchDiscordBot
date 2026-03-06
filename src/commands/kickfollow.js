@@ -54,10 +54,11 @@ module.exports = {
                 if (!existingSub) {
                     try {
                         const sub = await kickAPI.subscribeToLivestreamStatus(broadcasterUserId);
-                        const subId = sub?.data?.id || sub?.id;
+                        // Response: { data: [{ id, name, version, ... }] } — one entry per event in the request
+                        const subId = sub?.data?.[0]?.id ?? sub?.data?.id ?? sub?.id;
                         if (subId) {
                             await models.addKickEventSubSubscription(subId, slug, broadcasterUserId);
-                            logger.info(`Kick: created livestream.status.updated subscription for ${slug}`);
+                            logger.info(`Kick: created livestream.status.updated subscription for ${slug} (id: ${subId})`);
                         }
                     } catch (subError) {
                         const detail = subError.response
