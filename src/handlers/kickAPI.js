@@ -184,10 +184,13 @@ class KickAPI {
                 const clips = await this.getClipsOfficial(broadcasterUserId);
                 if (clips) return clips;
             } catch (error) {
-                const detail = error.response
-                    ? `HTTP ${error.response.status}: ${JSON.stringify(error.response.data)}`
-                    : error.message;
-                logger.warn(`Kick: official clips fetch failed for ${slug}: ${detail}`);
+                // 404 means the official /clips endpoint doesn't exist yet — expected, no need to warn
+                if (error.response?.status !== 404) {
+                    const detail = error.response
+                        ? `HTTP ${error.response.status}: ${JSON.stringify(error.response.data)}`
+                        : error.message;
+                    logger.warn(`Kick: official clips fetch failed for ${slug}: ${detail}`);
+                }
             }
         }
         return this.getClipsUnofficial(slug);
@@ -231,7 +234,9 @@ class KickAPI {
             const detail = error.response
                 ? `HTTP ${error.response.status}`
                 : error.message;
-            logger.error(`Error fetching Kick clips for ${slug}: ${detail}`);
+            // 403 is a known issue (Kick blocks server-side requests to unofficial API)
+            const level = error.response?.status === 403 ? 'warn' : 'error';
+            logger[level](`Kick clips unavailable for ${slug} via unofficial API: ${detail}`);
             return [];
         }
     }
@@ -241,8 +246,17 @@ class KickAPI {
         if (!this.hasCredentials) throw new Error('No Kick credentials configured');
         await this.ensureToken();
 
-        const webhookUrl = process.env.KICK_WEBHOOK_URL ||
-            (process.env.WEBHOOK_URL ? `${process.env.WEBHOOK_URL}/kick-webhook` : null);
+        // KICK_WEBHOOK_URL takes priority; otherwise derive from WEBHOOK_URL by extracting
+        // just the origin (e.g. https://example.com) so the path becomes /kick-webhook,
+        // not /webhook/kick-webhook (WEBHOOK_URL includes the /webhook path for Twitch).
+        let webhookUrl = process.env.KICK_WEBHOOK_URL || null;
+        if (!webhookUrl && process.env.WEBHOOK_URL) {
+            try {
+                webhookUrl = `${new URL(process.env.WEBHOOK_URL).origin}/kick-webhook`;
+            } catch {
+                // WEBHOOK_URL is not a valid URL
+            }
+        }
 
         if (!webhookUrl) throw new Error('No KICK_WEBHOOK_URL or WEBHOOK_URL configured');
 
