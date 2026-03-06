@@ -62,7 +62,8 @@ module.exports = {
                 // Seed clip polling state so only future clips are notified
                 const existingState = await models.getKickClipPollingState(slug);
                 if (!existingState) {
-                    const clips = await kickAPI.getRecentClips(slug);
+                    const broadcasterUserId = channel.user?.id || channel.id || null;
+                    const clips = await kickAPI.getRecentClips(slug, broadcasterUserId);
                     if (clips && clips.length > 0) {
                         const sorted = clips.slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
                         await models.setKickClipPollingState(slug, sorted[0].id.toString());
