@@ -139,7 +139,7 @@ class KickAPI {
             },
             timeout: 10000,
         });
-        logger.debug(`KickAPI official /channels response for ${slug}:`, JSON.stringify(response.data).slice(0, 300));
+        logger.info(`KickAPI official /channels response for ${slug}: ${JSON.stringify(response.data).slice(0, 500)}`);
         const data = response.data?.data?.[0];
         if (!data) return null;
         // Normalize to match shape expected by callers
