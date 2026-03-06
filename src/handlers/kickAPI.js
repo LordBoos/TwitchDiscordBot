@@ -104,11 +104,50 @@ class KickAPI {
         }
     }
 
-    // Unofficial API: get channel info by slug (no auth required)
+    // Get channel info by slug - uses official API if credentials available, unofficial as fallback
     async getChannelBySlug(slug) {
+        if (this.hasCredentials) {
+            try {
+                return await this.getChannelBySlugOfficial(slug);
+            } catch (error) {
+                logger.warn(`KickAPI: official channel lookup failed for ${slug}, trying unofficial:`, error.message);
+            }
+        }
+        return this.getChannelBySlugUnofficial(slug);
+    }
+
+    async getChannelBySlugOfficial(slug) {
+        await this.ensureToken();
+        const response = await axios.get(`${this.publicApiBase}/channels`, {
+            params: { broadcaster_user_login: slug },
+            headers: {
+                Authorization: `Bearer ${this.accessToken}`,
+                Accept: 'application/json',
+            },
+            timeout: 10000,
+        });
+        const data = response.data?.data?.[0];
+        if (!data) return null;
+        // Normalize to match shape expected by callers
+        return {
+            id: data.broadcaster_user_id,
+            slug: data.broadcaster_user_login,
+            user: {
+                id: data.broadcaster_user_id,
+                username: data.broadcaster_user_name,
+            },
+            livestream: null, // official channel endpoint doesn't return livestream info
+        };
+    }
+
+    async getChannelBySlugUnofficial(slug) {
         try {
             const response = await axios.get(`${this.unofficialApiBase}/v1/channels/${encodeURIComponent(slug)}`, {
-                headers: { Accept: 'application/json' },
+                headers: {
+                    Accept: 'application/json',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                    Referer: 'https://kick.com/',
+                },
                 timeout: 10000,
             });
             return response.data;
@@ -120,7 +159,7 @@ class KickAPI {
 
     // Returns current livestream object if the channel is live, null otherwise
     async getLivestream(slug) {
-        const channel = await this.getChannelBySlug(slug);
+        const channel = await this.getChannelBySlugUnofficial(slug);
         if (!channel || !channel.livestream || !channel.livestream.is_live) {
             return null;
         }
@@ -137,7 +176,11 @@ class KickAPI {
         try {
             const response = await axios.get(`${this.unofficialApiBase}/v2/channels/${encodeURIComponent(slug)}/clips`, {
                 params: { sort: 'date', time: 'all' },
-                headers: { Accept: 'application/json' },
+                headers: {
+                    Accept: 'application/json',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                    Referer: 'https://kick.com/',
+                },
                 timeout: 10000,
             });
             return response.data?.clips || [];
