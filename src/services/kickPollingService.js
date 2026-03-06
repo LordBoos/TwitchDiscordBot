@@ -96,7 +96,11 @@ class KickPollingService {
 
     async checkStreamerClips(slug) {
         try {
-            const clips = await this.kickAPI.getRecentClips(slug);
+            // Get broadcaster_user_id from channel follows (needed for official clips API)
+            const channelFollows = await this.models.getAllKickFollowsForStreamer(slug);
+            const broadcasterUserId = channelFollows.find(f => f.broadcaster_user_id)?.broadcaster_user_id ?? null;
+
+            const clips = await this.kickAPI.getRecentClips(slug, broadcasterUserId);
             if (!clips || clips.length === 0) return;
 
             // Sort oldest first so we process / notify in creation order

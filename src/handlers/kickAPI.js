@@ -177,8 +177,45 @@ class KickAPI {
         };
     }
 
-    // Unofficial API: get recent clips for a channel
-    async getRecentClips(slug) {
+    // Get recent clips for a channel — tries official API first, unofficial as fallback
+    async getRecentClips(slug, broadcasterUserId = null) {
+        if (this.hasCredentials && broadcasterUserId) {
+            try {
+                const clips = await this.getClipsOfficial(broadcasterUserId);
+                if (clips) return clips;
+            } catch (error) {
+                const detail = error.response
+                    ? `HTTP ${error.response.status}: ${JSON.stringify(error.response.data)}`
+                    : error.message;
+                logger.warn(`Kick: official clips fetch failed for ${slug}: ${detail}`);
+            }
+        }
+        return this.getClipsUnofficial(slug);
+    }
+
+    async getClipsOfficial(broadcasterUserId) {
+        await this.ensureToken();
+        const response = await axios.get(`${this.publicApiBase}/clips`, {
+            params: { broadcaster_user_id: Number(broadcasterUserId), sort: 'date' },
+            headers: {
+                Authorization: `Bearer ${this.accessToken}`,
+                Accept: 'application/json',
+            },
+            timeout: 10000,
+        });
+        // Normalize to match unofficial API shape: array of { id, clip_url, title, ... }
+        const data = response.data?.data;
+        if (!Array.isArray(data)) return null;
+        return data.map(c => ({
+            id: c.id ?? c.clip_id,
+            clip_url: c.clip_url ?? c.url,
+            title: c.title,
+            thumbnail_url: c.thumbnail_url,
+            ...c,
+        }));
+    }
+
+    async getClipsUnofficial(slug) {
         try {
             const response = await axios.get(`${this.unofficialApiBase}/v2/channels/${encodeURIComponent(slug)}/clips`, {
                 params: { sort: 'date', time: 'all' },
@@ -209,13 +246,17 @@ class KickAPI {
 
         if (!webhookUrl) throw new Error('No KICK_WEBHOOK_URL or WEBHOOK_URL configured');
 
+        // Kick API has used both 'event' and 'event_name' in different versions of their docs;
+        // broadcaster_user_id must be an integer
+        const body = {
+            event_name: 'livestream.status.updated',
+            broadcaster_user_id: Number(broadcasterId),
+            webhook_url: webhookUrl,
+        };
+        logger.info(`Kick: subscribing to ${body.event_name} for broadcaster ${body.broadcaster_user_id} → ${webhookUrl}`);
         const response = await axios.post(
             `${this.publicApiBase}/events/subscriptions`,
-            {
-                event: 'livestream.status.updated',
-                broadcaster_user_id: broadcasterId,
-                webhook_url: webhookUrl,
-            },
+            body,
             {
                 headers: {
                     Authorization: `Bearer ${this.accessToken}`,
