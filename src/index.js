@@ -5,8 +5,10 @@ const path = require('path');
 const logger = require('./utils/logger');
 const Models = require('./database/models');
 const TwitchAPI = require('./handlers/twitchAPI');
+const KickAPI = require('./handlers/kickAPI');
 const WebhookServer = require('./handlers/webhookServer');
 const ClipPollingService = require('./services/clipPollingService');
+const KickPollingService = require('./services/kickPollingService');
 
 class TwitchDiscordBot {
     constructor() {
@@ -19,13 +21,16 @@ class TwitchDiscordBot {
 
         this.models = new Models();
         this.twitchAPI = new TwitchAPI(this.models);
-        this.webhookServer = new WebhookServer(this.models, this.twitchAPI, this);
+        this.kickAPI = new KickAPI(this.models);
+        this.webhookServer = new WebhookServer(this.models, this.twitchAPI, this, this.kickAPI);
 
-        // Initialize clip polling service (will be started after bot is ready)
+        // Initialize polling services (started after bot is ready)
         this.clipPollingService = null;
+        this.kickPollingService = null;
 
         this.client.commands = new Collection();
-        this.client.twitchAPI = this.twitchAPI; // Make TwitchAPI available to commands
+        this.client.twitchAPI = this.twitchAPI;
+        this.client.kickAPI   = this.kickAPI;
         this.loadCommands();
         this.setupEventHandlers();
     }
@@ -58,8 +63,11 @@ class TwitchDiscordBot {
             // Clean up orphaned EventSub subscriptions
             await this.twitchAPI.cleanupOrphanedSubscriptions();
 
-            // Start clip polling service after bot is ready
+            // Start Twitch clip polling service after bot is ready
             this.startClipPollingService();
+
+            // Start Kick polling service after bot is ready
+            this.startKickPollingService();
         });
 
         this.client.on('interactionCreate', async (interaction) => {
@@ -101,6 +109,20 @@ class TwitchDiscordBot {
         this.client.on('warn', (warning) => {
             logger.warn('Discord client warning:', warning);
         });
+    }
+
+    startKickPollingService() {
+        try {
+            const NotificationHandler = require('./handlers/notificationHandler');
+            const notificationHandler = new NotificationHandler(this.models, this.twitchAPI, this);
+
+            this.kickPollingService = new KickPollingService(this.kickAPI, this.models, notificationHandler);
+            this.kickPollingService.start();
+
+            logger.info('Kick polling service started successfully');
+        } catch (error) {
+            logger.error('Failed to start Kick polling service:', error);
+        }
     }
 
     async deployCommands() {
@@ -185,6 +207,9 @@ class TwitchDiscordBot {
             // Initialize Twitch API
             await this.twitchAPI.initialize();
 
+            // Initialize Kick API (optional – gracefully degrades if no credentials)
+            await this.kickAPI.initialize();
+
             // Start webhook server
             await this.webhookServer.start();
 
@@ -202,9 +227,14 @@ class TwitchDiscordBot {
         logger.info('Shutting down bot...');
 
         try {
-            // Stop clip polling service
+            // Stop Twitch clip polling service
             if (this.clipPollingService) {
                 this.clipPollingService.stop();
+            }
+
+            // Stop Kick polling service
+            if (this.kickPollingService) {
+                this.kickPollingService.stop();
             }
 
             // Close webhook server

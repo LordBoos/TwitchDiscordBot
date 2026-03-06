@@ -4,10 +4,11 @@ const logger = require('../utils/logger');
 const NotificationHandler = require('./notificationHandler');
 
 class WebhookServer {
-    constructor(models, twitchAPI, discordBot) {
+    constructor(models, twitchAPI, discordBot, kickAPI = null) {
         this.models = models;
         this.twitchAPI = twitchAPI;
         this.discordBot = discordBot;
+        this.kickAPI = kickAPI;
         this.app = express();
         this.server = null;
         this.port = process.env.WEBHOOK_PORT || 3000;
@@ -20,8 +21,9 @@ class WebhookServer {
     }
 
     setupMiddleware() {
-        // Raw body parser for webhook verification
+        // Raw body parsers for webhook verification (must come before express.json())
         this.app.use('/webhook', express.raw({ type: 'application/json' }));
+        this.app.use('/kick-webhook', express.raw({ type: 'application/json' }));
 
         // JSON parser for other routes
         this.app.use(express.json());
@@ -43,9 +45,14 @@ class WebhookServer {
             });
         });
 
-        // Main webhook endpoint
+        // Twitch EventSub webhook endpoint
         this.app.post('/webhook', (req, res) => {
             this.handleWebhook(req, res);
+        });
+
+        // Kick EventSub webhook endpoint (used when KICK_CLIENT_ID is configured)
+        this.app.post('/kick-webhook', (req, res) => {
+            this.handleKickWebhook(req, res);
         });
 
         // Catch-all for undefined routes
@@ -171,6 +178,64 @@ class WebhookServer {
             }
         } catch (error) {
             logger.error('Error handling subscription revocation:', error);
+        }
+    }
+
+    async handleKickWebhook(req, res) {
+        try {
+            const messageId  = req.headers['kick-event-message-id'];
+            const timestamp  = req.headers['kick-event-message-timestamp'];
+            const eventType  = req.headers['kick-event-type'];
+            const signatureB64 = req.headers['kick-event-signature'];
+
+            // Verify RSA-SHA256 signature using Kick's public key
+            if (this.kickAPI) {
+                if (!this.kickAPI.verifyWebhookSignature(messageId, timestamp, req.body, signatureB64)) {
+                    logger.warn('Invalid Kick webhook signature');
+                    return res.status(403).json({ error: 'Invalid signature' });
+                }
+            } else {
+                logger.warn('KickAPI not available – skipping Kick webhook signature verification');
+            }
+
+            // Reject stale messages (>10 minutes old)
+            const messageTime = new Date(timestamp);
+            const timeDiff = Math.abs(new Date() - messageTime) / 1000;
+            if (timeDiff > 600) {
+                logger.warn(`Kick webhook message too old: ${timeDiff}s`);
+                return res.status(400).json({ error: 'Message too old' });
+            }
+
+            const body = JSON.parse(req.body.toString());
+            logger.info(`Received Kick webhook event: ${eventType}`);
+
+            if (eventType === 'livestream.status.updated') {
+                if (body.is_live === true) {
+                    const slug = body.broadcaster?.channel_slug;
+                    if (slug) {
+                        logger.info(`Kick: ${slug} went live (via webhook)`);
+                        // Build a minimal livestream object from webhook payload
+                        const livestream = {
+                            session_title: body.title || 'Live Stream',
+                            is_live: true,
+                            viewer_count: 0,
+                            slug,
+                            user: {
+                                username: body.broadcaster?.username || slug,
+                                profile_pic: body.broadcaster?.profile_picture || null,
+                            },
+                        };
+                        await this.notificationHandler.handleKickStreamOnline(slug, livestream);
+                    }
+                } else {
+                    logger.info(`Kick: ${body.broadcaster?.channel_slug} went offline`);
+                }
+            }
+
+            return res.status(200).json({ status: 'ok' });
+        } catch (error) {
+            logger.error('Error handling Kick webhook:', error);
+            return res.status(500).json({ error: 'Internal server error' });
         }
     }
 
