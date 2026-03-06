@@ -72,7 +72,7 @@ module.exports = {
 
             if (unverified) {
                 return interaction.editReply(
-                    `✅ Now following **[${slug}](https://kick.com/${slug})** on Kick in this channel!\n` +
+                    `✅ Now following [**${slug}**](https://kick.com/${slug}) on Kick in this channel!\n` +
                     `⚠️ *Could not verify the channel exists (Kick API temporarily unavailable). ` +
                     `Notifications will use polling. If the slug is wrong, use \`/kickunfollow\` to remove it.*`
                 );
@@ -83,7 +83,7 @@ module.exports = {
                 : 'Live notifications delivered via polling (every 2 min). Add `KICK_CLIENT_ID`/`KICK_CLIENT_SECRET` for instant webhooks.';
 
             return interaction.editReply(
-                `✅ Now following **[${displayName}](https://kick.com/${slug})** on Kick in this channel!\n*${modeNote}*`
+                `✅ Now following [**${displayName}**](https://kick.com/${slug}) on Kick in this channel!\n*${modeNote}*`
             );
         } catch (error) {
             logger.error(`Error executing /kickfollow for ${slug}:`, error);

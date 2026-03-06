@@ -72,7 +72,7 @@ module.exports = {
 
                 logger.info(`Kick clip follow added: ${slug} → channel ${interaction.channelId}`);
                 return interaction.editReply(
-                    `✅ Now receiving clip notifications for **[${displayName}](https://kick.com/${slug})** in this channel!\n*Clips are checked every 5 minutes.*`
+                    `✅ Now receiving clip notifications for [**${displayName}**](https://kick.com/${slug}) in this channel!\n*Clips are checked every 5 minutes.*`
                 );
             } catch (error) {
                 logger.error(`Error in /kickclips follow for ${slug}:`, error);
