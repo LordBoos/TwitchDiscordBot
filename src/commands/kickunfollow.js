@@ -30,7 +30,7 @@ module.exports = {
             const remainingFollows = await models.getAllKickFollowsForStreamer(slug);
             if (remainingFollows.length === 0) {
                 // No more follows – remove webhook subscription if one exists
-                if (kickAPI.hasCredentials) {
+                if (kickAPI.hasCredentials || kickAPI.hasUserToken) {
                     const sub = await models.getKickEventSubSubscription(slug);
                     if (sub) {
                         try {

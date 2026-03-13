@@ -10,10 +10,27 @@ class KickAPI {
         this.oauthUrl = 'https://id.kick.com';
         this.clientId = process.env.KICK_CLIENT_ID;
         this.clientSecret = process.env.KICK_CLIENT_SECRET;
+        this.hasCredentials = !!(this.clientId && this.clientSecret);
+
+        // App access token (client_credentials) — for public API calls
         this.accessToken = null;
         this.tokenExpiresAt = null;
+
+        // User access token (authorization code + PKCE) — for event subscriptions
+        this.userAccessToken = null;
+        this.userRefreshToken = null;
+        this.userTokenExpiresAt = null;
+        this.hasUserToken = false;
+
+        // Pending PKCE state for OAuth flow (in-memory, survives until bot restart)
+        this.pendingPKCE = null;
+
+        // RSA public key for webhook signature verification
         this.publicKey = null;
-        this.hasCredentials = !!(this.clientId && this.clientSecret);
+
+        // Derive redirect URI from WEBHOOK_URL or explicit env var
+        const webhookBase = (process.env.WEBHOOK_URL || '').replace(/\/webhook\/?$/, '');
+        this.redirectUri = process.env.KICK_REDIRECT_URI || (webhookBase ? `${webhookBase}/kick-auth/callback` : null);
     }
 
     async initialize() {
@@ -26,10 +43,17 @@ class KickAPI {
                 logger.warn('KickAPI: Failed to initialize official API, falling back to polling-only mode:', error.message);
                 this.hasCredentials = false;
             }
+
+            // Try to load a previously stored user token
+            await this.loadUserToken();
         } else {
             logger.info('KickAPI initialized in polling-only mode (no KICK_CLIENT_ID/KICK_CLIENT_SECRET configured)');
         }
     }
+
+    // =========================================================================
+    // App access token (client_credentials) — for public API calls
+    // =========================================================================
 
     async loadOrRefreshToken() {
         const stored = await this.models.getKickToken();
@@ -40,7 +64,7 @@ class KickAPI {
             if ((expiresAt - now) > 5 * 60 * 1000) {
                 this.accessToken = stored.access_token;
                 this.tokenExpiresAt = expiresAt;
-                logger.info('Loaded Kick access token from database');
+                logger.info('Loaded Kick app access token from database');
                 return;
             }
         }
@@ -64,7 +88,7 @@ class KickAPI {
         this.accessToken = access_token;
         this.tokenExpiresAt = expiresAt;
         await this.models.saveKickToken(access_token, expiresAt);
-        logger.info('Fetched new Kick access token');
+        logger.info('Fetched new Kick app access token');
     }
 
     async ensureToken() {
@@ -72,6 +96,188 @@ class KickAPI {
             await this.fetchNewToken();
         }
     }
+
+    // =========================================================================
+    // User access token (OAuth Authorization Code + PKCE) — for subscriptions
+    // =========================================================================
+
+    /**
+     * Generate PKCE parameters for the OAuth authorization code flow.
+     * Returns { codeVerifier, codeChallenge, state }
+     */
+    generatePKCEParams() {
+        const codeVerifier = crypto.randomBytes(32).toString('base64url');
+        const codeChallenge = crypto
+            .createHash('sha256')
+            .update(codeVerifier)
+            .digest('base64url');
+        const state = crypto.randomBytes(16).toString('hex');
+        return { codeVerifier, codeChallenge, state };
+    }
+
+    /**
+     * Generate the Kick OAuth authorization URL for the user to visit.
+     * Stores PKCE state in memory for later code exchange.
+     */
+    getAuthorizationUrl(scopes = ['user:read', 'events:subscribe']) {
+        if (!this.redirectUri) {
+            throw new Error('No redirect URI configured. Set KICK_REDIRECT_URI or WEBHOOK_URL in .env');
+        }
+
+        const pkce = this.generatePKCEParams();
+        this.pendingPKCE = {
+            codeVerifier: pkce.codeVerifier,
+            state: pkce.state,
+            createdAt: Date.now(),
+        };
+
+        const params = new URLSearchParams({
+            response_type: 'code',
+            client_id: this.clientId,
+            redirect_uri: this.redirectUri,
+            scope: scopes.join(' '),
+            code_challenge: pkce.codeChallenge,
+            code_challenge_method: 'S256',
+            state: pkce.state,
+        });
+
+        return `${this.oauthUrl}/oauth/authorize?${params.toString()}`;
+    }
+
+    /**
+     * Exchange an authorization code for user access + refresh tokens.
+     * Called from the OAuth callback endpoint.
+     */
+    async exchangeCodeForToken(code, state) {
+        if (!this.pendingPKCE) {
+            throw new Error('No pending PKCE state. Run /kickauth first.');
+        }
+        if (this.pendingPKCE.state !== state) {
+            throw new Error('OAuth state mismatch — possible CSRF attack.');
+        }
+
+        // Expire PKCE state after 10 minutes
+        if (Date.now() - this.pendingPKCE.createdAt > 10 * 60 * 1000) {
+            this.pendingPKCE = null;
+            throw new Error('PKCE state expired. Run /kickauth again.');
+        }
+
+        const codeVerifier = this.pendingPKCE.codeVerifier;
+        this.pendingPKCE = null; // Consume the PKCE state
+
+        const response = await axios.post(
+            `${this.oauthUrl}/oauth/token`,
+            new URLSearchParams({
+                grant_type: 'authorization_code',
+                client_id: this.clientId,
+                client_secret: this.clientSecret,
+                redirect_uri: this.redirectUri,
+                code,
+                code_verifier: codeVerifier,
+            }),
+            { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+        );
+
+        const { access_token, refresh_token, expires_in, scope } = response.data;
+        const expiresAt = new Date(Date.now() + expires_in * 1000);
+
+        this.userAccessToken = access_token;
+        this.userRefreshToken = refresh_token;
+        this.userTokenExpiresAt = expiresAt;
+        this.hasUserToken = true;
+
+        await this.models.saveKickUserToken(access_token, refresh_token, expiresAt, scope || null);
+        logger.info('Kick user access token obtained and stored');
+
+        return { access_token, refresh_token, expires_in, scope };
+    }
+
+    /**
+     * Load a previously stored user token from the database.
+     */
+    async loadUserToken() {
+        try {
+            const stored = await this.models.getKickUserToken();
+            if (!stored) return;
+
+            const expiresAt = new Date(stored.expires_at);
+            const now = new Date();
+
+            if ((expiresAt - now) > 5 * 60 * 1000) {
+                // Token still valid
+                this.userAccessToken = stored.access_token;
+                this.userRefreshToken = stored.refresh_token;
+                this.userTokenExpiresAt = expiresAt;
+                this.hasUserToken = true;
+                logger.info('Loaded Kick user access token from database');
+            } else if (stored.refresh_token) {
+                // Token expired but we have a refresh token — try refreshing
+                logger.info('Kick user token expired, attempting refresh...');
+                await this.refreshUserToken(stored.refresh_token);
+            } else {
+                logger.warn('Kick user token expired and no refresh token available. Run /kickauth to re-authorize.');
+            }
+        } catch (error) {
+            logger.warn('Could not load Kick user token:', error.message);
+        }
+    }
+
+    /**
+     * Refresh the user access token using the refresh token.
+     */
+    async refreshUserToken(refreshToken = null) {
+        const token = refreshToken || this.userRefreshToken;
+        if (!token) {
+            this.hasUserToken = false;
+            throw new Error('No refresh token available. Run /kickauth to re-authorize.');
+        }
+
+        try {
+            const response = await axios.post(
+                `${this.oauthUrl}/oauth/token`,
+                new URLSearchParams({
+                    grant_type: 'refresh_token',
+                    client_id: this.clientId,
+                    client_secret: this.clientSecret,
+                    refresh_token: token,
+                }),
+                { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+            );
+
+            const { access_token, refresh_token, expires_in, scope } = response.data;
+            const expiresAt = new Date(Date.now() + expires_in * 1000);
+
+            this.userAccessToken = access_token;
+            this.userRefreshToken = refresh_token || token; // Some providers don't rotate refresh tokens
+            this.userTokenExpiresAt = expiresAt;
+            this.hasUserToken = true;
+
+            await this.models.saveKickUserToken(this.userAccessToken, this.userRefreshToken, expiresAt, scope || null);
+            logger.info('Kick user access token refreshed');
+        } catch (error) {
+            logger.error('Failed to refresh Kick user token:', error.message);
+            this.hasUserToken = false;
+            // Don't delete stored token — the refresh token might still work later
+            throw error;
+        }
+    }
+
+    /**
+     * Ensure we have a valid user access token. Auto-refreshes if near expiry.
+     */
+    async ensureUserToken() {
+        if (!this.userAccessToken) {
+            throw new Error('No Kick user token. Run /kickauth to authorize.');
+        }
+
+        if (this.userTokenExpiresAt && (this.userTokenExpiresAt - new Date()) < 5 * 60 * 1000) {
+            await this.refreshUserToken();
+        }
+    }
+
+    // =========================================================================
+    // Webhook signature verification
+    // =========================================================================
 
     async fetchPublicKey() {
         try {
@@ -103,6 +309,10 @@ class KickAPI {
             return false;
         }
     }
+
+    // =========================================================================
+    // Channel lookups (use app token)
+    // =========================================================================
 
     // Get channel info by slug - uses official API if credentials available, unofficial as fallback.
     // Returns null if channel definitively not found (404), or a stub with _unverified:true if
@@ -162,6 +372,10 @@ class KickAPI {
         });
         return response.data;
     }
+
+    // =========================================================================
+    // Livestream status (use app token)
+    // =========================================================================
 
     // Returns current livestream object if the channel is live, null otherwise.
     // Tries official API first (by broadcaster_user_id) when credentials are available,
@@ -224,6 +438,10 @@ class KickAPI {
             broadcaster_user_id: data.broadcaster_user_id,
         };
     }
+
+    // =========================================================================
+    // Clips (use app token)
+    // =========================================================================
 
     // Get recent clips for a channel — tries official API first, unofficial as fallback
     async getRecentClips(slug, broadcasterUserId = null) {
@@ -289,12 +507,18 @@ class KickAPI {
         }
     }
 
+    // =========================================================================
+    // Event subscriptions (use USER token — requires events:subscribe scope)
+    // =========================================================================
+
     // Official API: subscribe to livestream.status.updated event
     // Note: webhook URL is NOT sent per-request — it must be pre-registered in the
     // Kick developer portal under your app settings.
     async subscribeToLivestreamStatus(broadcasterId) {
         if (!this.hasCredentials) throw new Error('No Kick credentials configured');
-        await this.ensureToken();
+        if (!this.hasUserToken) throw new Error('No Kick user token. Run /kickauth to authorize.');
+
+        await this.ensureUserToken();
 
         const body = {
             event: 'livestream.status.updated',
@@ -306,7 +530,7 @@ class KickAPI {
             body,
             {
                 headers: {
-                    Authorization: `Bearer ${this.accessToken}`,
+                    Authorization: `Bearer ${this.userAccessToken}`,
                     'Content-Type': 'application/json',
                 },
             }
@@ -317,12 +541,16 @@ class KickAPI {
     // Official API: delete a subscription by ID
     async unsubscribeFromEvent(subscriptionId) {
         if (!this.hasCredentials) return;
-        await this.ensureToken();
+
+        // Use user token if available, fall back to app token
+        const token = this.hasUserToken ? this.userAccessToken : this.accessToken;
+        if (this.hasUserToken) await this.ensureUserToken();
+        else await this.ensureToken();
 
         await axios.delete(`${this.publicApiBase}/events/subscriptions`, {
             data: { subscription_id: subscriptionId },
             headers: {
-                Authorization: `Bearer ${this.accessToken}`,
+                Authorization: `Bearer ${token}`,
                 'Content-Type': 'application/json',
             },
         });
@@ -331,12 +559,62 @@ class KickAPI {
     // Official API: list all active subscriptions
     async getAllSubscriptions() {
         if (!this.hasCredentials) return [];
-        await this.ensureToken();
+
+        // Use user token if available, fall back to app token
+        const token = this.hasUserToken ? this.userAccessToken : this.accessToken;
+        if (this.hasUserToken) await this.ensureUserToken();
+        else await this.ensureToken();
 
         const response = await axios.get(`${this.publicApiBase}/events/subscriptions`, {
-            headers: { Authorization: `Bearer ${this.accessToken}` },
+            headers: { Authorization: `Bearer ${token}` },
         });
         return response.data?.data || [];
+    }
+
+    /**
+     * After obtaining a user token, subscribe to livestream events for all
+     * currently followed Kick streamers that don't already have a subscription.
+     */
+    async subscribeAllExistingFollows() {
+        if (!this.hasUserToken) return;
+
+        try {
+            const follows = await this.models.getAllKickChannelFollows();
+            // Deduplicate by slug
+            const slugMap = new Map();
+            for (const f of follows) {
+                if (f.broadcaster_user_id && !slugMap.has(f.streamer_slug)) {
+                    slugMap.set(f.streamer_slug, f.broadcaster_user_id);
+                }
+            }
+
+            let created = 0;
+            for (const [slug, broadcasterId] of slugMap) {
+                const existingSub = await this.models.getKickEventSubSubscription(slug);
+                if (existingSub) continue;
+
+                try {
+                    const sub = await this.subscribeToLivestreamStatus(broadcasterId);
+                    const subId = sub?.data?.subscription_id ?? sub?.data?.id ?? sub?.id;
+                    if (subId) {
+                        await this.models.addKickEventSubSubscription(subId, slug, broadcasterId);
+                        created++;
+                        logger.info(`Kick: created subscription for ${slug} (id: ${subId})`);
+                    }
+                } catch (error) {
+                    const detail = error.response
+                        ? `HTTP ${error.response.status}: ${JSON.stringify(error.response.data)}`
+                        : error.message;
+                    logger.warn(`Kick: failed to subscribe for ${slug}: ${detail}`);
+                }
+            }
+
+            if (created > 0) {
+                logger.info(`Kick: created ${created} webhook subscription(s) for existing follows`);
+            }
+        } catch (error) {
+            logger.error('Kick: error subscribing existing follows:', error.message);
+        }
     }
 }
 

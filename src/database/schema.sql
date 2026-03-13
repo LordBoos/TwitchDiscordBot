@@ -145,11 +145,23 @@ CREATE TABLE IF NOT EXISTS kick_eventsub_subscriptions (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- Kick OAuth tokens
+-- Kick OAuth tokens (app access token from client_credentials)
 CREATE TABLE IF NOT EXISTS kick_tokens (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     access_token TEXT NOT NULL,
     expires_at DATETIME NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Kick user OAuth tokens (user access token from authorization code + PKCE flow)
+-- Required for event subscriptions (events:subscribe scope)
+CREATE TABLE IF NOT EXISTS kick_user_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    access_token TEXT NOT NULL,
+    refresh_token TEXT NOT NULL,
+    expires_at DATETIME NOT NULL,
+    scope TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );

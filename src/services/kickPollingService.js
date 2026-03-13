@@ -13,12 +13,14 @@ class KickPollingService {
         this.streamPollTimer = null;
         this.clipPollTimer = null;
 
-        // Only poll stream status when not relying on webhooks
-        this.pollStreams = !kickAPI.hasCredentials;
+        // Poll stream status unless we have a user token for webhook subscriptions.
+        // Having client credentials alone is NOT enough for webhooks — the events:subscribe
+        // scope requires a user access token obtained via the OAuth authorization code flow.
+        this.pollStreams = !kickAPI.hasUserToken;
     }
 
     start() {
-        logger.info(`Kick polling service starting (stream polling: ${this.pollStreams})`);
+        logger.info(`Kick polling service starting (stream polling: ${this.pollStreams ? 'enabled' : 'disabled — using webhooks'})`);
 
         setTimeout(async () => {
             if (this.pollStreams) await this.pollStreamStatus();

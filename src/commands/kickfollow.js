@@ -48,8 +48,8 @@ module.exports = {
                 broadcasterUserId
             );
 
-            // If official Kick credentials are configured and we have a user ID, subscribe to the webhook
-            if (kickAPI.hasCredentials && broadcasterUserId) {
+            // If we have a user token (events:subscribe scope), subscribe to the webhook
+            if (kickAPI.hasUserToken && broadcasterUserId) {
                 const existingSub = await models.getKickEventSubSubscription(slug);
                 if (!existingSub) {
                     try {
@@ -79,9 +79,14 @@ module.exports = {
                 );
             }
 
-            const modeNote = (kickAPI.hasCredentials && broadcasterUserId)
-                ? 'Live notifications delivered via Kick webhooks.'
-                : 'Live notifications delivered via polling (every 2 min). Add `KICK_CLIENT_ID`/`KICK_CLIENT_SECRET` for instant webhooks.';
+            let modeNote;
+            if (kickAPI.hasUserToken && broadcasterUserId) {
+                modeNote = 'Live notifications delivered via Kick webhooks (instant).';
+            } else if (kickAPI.hasCredentials) {
+                modeNote = 'Live notifications delivered via polling (every 2 min). Run `/kickauth` to enable instant webhooks.';
+            } else {
+                modeNote = 'Live notifications delivered via polling (every 2 min). Add `KICK_CLIENT_ID`/`KICK_CLIENT_SECRET` and run `/kickauth` for instant webhooks.';
+            }
 
             return interaction.editReply(
                 `✅ Now following [**${displayName}**](https://kick.com/${slug}) on Kick in this channel!\n*${modeNote}*`

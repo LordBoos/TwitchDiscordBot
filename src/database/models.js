@@ -482,6 +482,29 @@ class Models {
     }
 
     // =========================================================================
+    // Kick user token operations (OAuth authorization code + PKCE flow)
+    // =========================================================================
+
+    async saveKickUserToken(accessToken, refreshToken, expiresAt, scope = null) {
+        const sql = `
+            INSERT OR REPLACE INTO kick_user_tokens
+            (id, access_token, refresh_token, expires_at, scope, updated_at)
+            VALUES (1, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        `;
+        return await this.db.run(sql, [accessToken, refreshToken, expiresAt.toISOString(), scope]);
+    }
+
+    async getKickUserToken() {
+        const sql = `SELECT * FROM kick_user_tokens WHERE id = 1`;
+        return await this.db.get(sql);
+    }
+
+    async deleteKickUserToken() {
+        const sql = `DELETE FROM kick_user_tokens WHERE id = 1`;
+        return await this.db.run(sql);
+    }
+
+    // =========================================================================
     // Kick clip polling state
     // =========================================================================
 

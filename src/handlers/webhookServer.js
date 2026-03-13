@@ -27,6 +27,7 @@ class WebhookServer {
 
         // JSON parser for other routes
         this.app.use(express.json());
+        this.app.use(express.urlencoded({ extended: true }));
 
         // Basic logging middleware
         this.app.use((req, res, next) => {
@@ -53,6 +54,11 @@ class WebhookServer {
         // Kick EventSub webhook endpoint (used when KICK_CLIENT_ID is configured)
         this.app.post('/kick-webhook', (req, res) => {
             this.handleKickWebhook(req, res);
+        });
+
+        // Kick OAuth callback endpoint (receives authorization code after user authorizes)
+        this.app.get('/kick-auth/callback', (req, res) => {
+            this.handleKickOAuthCallback(req, res);
         });
 
         // Catch-all for undefined routes
@@ -241,6 +247,57 @@ class WebhookServer {
         } catch (error) {
             logger.error('Error handling Kick webhook:', error);
             return res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    async handleKickOAuthCallback(req, res) {
+        try {
+            const { code, state, error: oauthError, error_description } = req.query;
+
+            if (oauthError) {
+                logger.warn(`Kick OAuth error: ${oauthError} — ${error_description}`);
+                return res.status(400).send(
+                    `<html><body><h2>Authorization Failed</h2>` +
+                    `<p>${error_description || oauthError}</p>` +
+                    `<p>You can close this window and try again with <code>/kickauth</code>.</p></body></html>`
+                );
+            }
+
+            if (!code || !state) {
+                return res.status(400).send(
+                    `<html><body><h2>Missing Parameters</h2>` +
+                    `<p>No authorization code received. Try again with <code>/kickauth</code>.</p></body></html>`
+                );
+            }
+
+            if (!this.kickAPI) {
+                return res.status(500).send(
+                    `<html><body><h2>Server Error</h2>` +
+                    `<p>Kick API not configured.</p></body></html>`
+                );
+            }
+
+            // Exchange the authorization code for tokens
+            await this.kickAPI.exchangeCodeForToken(code, state);
+
+            logger.info('Kick OAuth callback: user token obtained successfully');
+
+            // Now create webhook subscriptions for all existing follows
+            await this.kickAPI.subscribeAllExistingFollows();
+
+            return res.status(200).send(
+                `<html><body style="font-family: system-ui; max-width: 500px; margin: 80px auto; text-align: center;">` +
+                `<h2 style="color: #53FC18;">Kick Authorization Successful!</h2>` +
+                `<p>Your bot can now receive instant webhook notifications for Kick streams.</p>` +
+                `<p>You can close this window.</p></body></html>`
+            );
+        } catch (error) {
+            logger.error('Kick OAuth callback error:', error.message);
+            return res.status(500).send(
+                `<html><body><h2>Authorization Failed</h2>` +
+                `<p>${error.message}</p>` +
+                `<p>Try again with <code>/kickauth</code> in Discord.</p></body></html>`
+            );
         }
     }
 
