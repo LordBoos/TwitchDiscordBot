@@ -511,8 +511,10 @@ class KickAPI {
     // Event subscriptions (use USER token — requires events:subscribe scope)
     // =========================================================================
 
-    // Official API: subscribe to livestream.status.updated event
-    // Note: webhook URL is NOT sent per-request — it must be pre-registered in the
+    // Official API: subscribe to livestream status events for a broadcaster.
+    // Kick's docs show two different API formats — we try multiple request
+    // variations to find the one the live API actually accepts.
+    // Webhook URL is NOT sent per-request — it must be pre-registered in the
     // Kick developer portal under your app settings.
     async subscribeToLivestreamStatus(broadcasterId) {
         if (!this.hasCredentials) throw new Error('No Kick credentials configured');
@@ -520,22 +522,43 @@ class KickAPI {
 
         await this.ensureUserToken();
 
-        const body = {
-            event: 'livestream.status.updated',
-            broadcaster_user_id: Number(broadcasterId),
+        const headers = {
+            Authorization: `Bearer ${this.userAccessToken}`,
+            'Content-Type': 'application/json',
         };
-        logger.info(`Kick: subscribing to livestream.status.updated for broadcaster ${body.broadcaster_user_id}`);
-        const response = await axios.post(
-            `${this.publicApiBase}/events/subscriptions`,
-            body,
-            {
-                headers: {
-                    Authorization: `Bearer ${this.userAccessToken}`,
-                    'Content-Type': 'application/json',
-                },
+        const endpoint = `${this.publicApiBase}/events/subscriptions`;
+
+        // Kick's API docs are inconsistent. Try multiple request format
+        // variations until one succeeds.
+        const attempts = [
+            // Attempt 1: dot-notation event name + broadcaster_user_id as number (llms.txt example)
+            { event: 'livestream.status.updated', broadcaster_user_id: Number(broadcasterId) },
+            // Attempt 2: dot-notation event name + broadcaster_user_id as string (llms.txt param spec says "string")
+            { event: 'livestream.status.updated', broadcaster_user_id: String(broadcasterId) },
+            // Attempt 3: dot-notation event name without broadcaster_user_id
+            { event: 'livestream.status.updated' },
+            // Attempt 4: underscore event name + broadcaster_user_id as number
+            { event: 'stream.online', broadcaster_user_id: Number(broadcasterId) },
+        ];
+
+        let lastError = null;
+        for (const body of attempts) {
+            try {
+                logger.info(`Kick: trying subscription with body: ${JSON.stringify(body)}`);
+                const response = await axios.post(endpoint, body, { headers });
+                logger.info(`Kick: subscription succeeded with body: ${JSON.stringify(body)}`);
+                return response.data;
+            } catch (error) {
+                const detail = error.response
+                    ? `HTTP ${error.response.status}: ${JSON.stringify(error.response.data)}`
+                    : error.message;
+                logger.warn(`Kick: subscription attempt failed (${JSON.stringify(body)}): ${detail}`);
+                lastError = error;
             }
-        );
-        return response.data;
+        }
+
+        // All attempts failed — throw the last error
+        throw lastError;
     }
 
     // Official API: delete a subscription by ID
