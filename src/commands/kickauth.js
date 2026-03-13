@@ -39,6 +39,8 @@ module.exports = {
 
             logger.info('Kick OAuth: authorization URL generated');
 
+            const webhookUrl = (process.env.WEBHOOK_URL || '').replace(/\/webhook\/?$/, '') + '/kick-webhook';
+
             return interaction.editReply(
                 '🔗 **Kick Authorization Required**\n\n' +
                 'To enable instant webhook notifications (instead of 2-min polling), ' +
@@ -46,8 +48,10 @@ module.exports = {
                 `**[Click here to authorize with Kick](${authUrl})**\n\n` +
                 '*This link expires in 10 minutes. After authorizing, the bot will automatically ' +
                 'create webhook subscriptions for all followed Kick streamers.*\n\n' +
-                '> **Note:** Make sure your Kick app\'s redirect URI is set to:\n' +
-                `> \`${kickAPI.redirectUri}\``
+                '> **Setup checklist** (in [Kick Developer Settings](https://kick.com/settings/developer)):\n' +
+                `> 1. Set **Redirect URI** to: \`${kickAPI.redirectUri}\`\n` +
+                `> 2. Toggle **Enable Webhooks** to ON\n` +
+                `> 3. Set **Webhook URL** to: \`${webhookUrl}\``
             );
         } catch (error) {
             logger.error('Error generating Kick auth URL:', error);
