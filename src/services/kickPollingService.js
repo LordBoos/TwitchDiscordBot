@@ -59,7 +59,11 @@ class KickPollingService {
 
     async checkStreamerLive(slug) {
         try {
-            const livestream = await this.kickAPI.getLivestream(slug);
+            // Get broadcaster_user_id if available (needed for official API)
+            const channelFollows = await this.models.getAllKickFollowsForStreamer(slug);
+            const broadcasterUserId = channelFollows.find(f => f.broadcaster_user_id)?.broadcaster_user_id ?? null;
+
+            const livestream = await this.kickAPI.getLivestream(slug, broadcasterUserId);
             const isLive = !!livestream;
 
             const prevState = await this.models.getKickStreamState(slug);

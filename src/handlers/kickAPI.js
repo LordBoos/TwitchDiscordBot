@@ -87,8 +87,8 @@ class KickAPI {
     // Verify RSA-SHA256 webhook signature from Kick
     verifyWebhookSignature(messageId, timestamp, rawBody, signatureB64) {
         if (!this.publicKey) {
-            logger.warn('No Kick public key available, skipping signature verification');
-            return true;
+            logger.error('No Kick public key available, rejecting webhook');
+            return false;
         }
         if (!signatureB64) {
             logger.warn('No Kick webhook signature provided');
@@ -163,17 +163,65 @@ class KickAPI {
         return response.data;
     }
 
-    // Returns current livestream object if the channel is live, null otherwise
-    async getLivestream(slug) {
-        const channel = await this.getChannelBySlugUnofficial(slug);
-        if (!channel || !channel.livestream || !channel.livestream.is_live) {
+    // Returns current livestream object if the channel is live, null otherwise.
+    // Tries official API first (by broadcaster_user_id) when credentials are available,
+    // falls back to unofficial channel endpoint.
+    async getLivestream(slug, broadcasterUserId = null) {
+        // Try official API first if we have credentials and a broadcaster ID
+        if (this.hasCredentials && broadcasterUserId) {
+            try {
+                const livestream = await this.getLivestreamOfficial(broadcasterUserId, slug);
+                if (livestream !== undefined) return livestream; // null = not live, object = live
+            } catch (error) {
+                logger.warn(`Kick: official livestream check failed for ${slug}, trying unofficial:`, error.message);
+            }
+        }
+
+        // Fallback to unofficial API
+        try {
+            const channel = await this.getChannelBySlugUnofficial(slug);
+            if (!channel || !channel.livestream || !channel.livestream.is_live) {
+                return null;
+            }
+            return {
+                ...channel.livestream,
+                slug: channel.slug,
+                user: channel.user,
+                channel_id: channel.id,
+            };
+        } catch (error) {
+            const status = error.response?.status;
+            const level = status === 403 ? 'warn' : 'error';
+            logger[level](`Kick: unofficial livestream check failed for ${slug} (HTTP ${status ?? 'network'}):`, error.message);
             return null;
         }
+    }
+
+    // Official API: check if a broadcaster is currently live
+    async getLivestreamOfficial(broadcasterUserId, slug) {
+        await this.ensureToken();
+        const response = await axios.get(`${this.publicApiBase}/livestreams`, {
+            params: { broadcaster_user_id: Number(broadcasterUserId) },
+            headers: {
+                Authorization: `Bearer ${this.accessToken}`,
+                Accept: 'application/json',
+            },
+            timeout: 10000,
+        });
+        const data = response.data?.data?.[0];
+        if (!data || !data.is_live) return null;
         return {
-            ...channel.livestream,
-            slug: channel.slug,
-            user: channel.user,
-            channel_id: channel.id,
+            session_title: data.session_title,
+            is_live: true,
+            viewer_count: data.viewers ?? 0,
+            slug: data.slug || slug,
+            categories: data.categories || [],
+            user: {
+                username: slug,
+                profile_pic: data.thumbnail || null,
+            },
+            channel_id: data.channel_id,
+            broadcaster_user_id: data.broadcaster_user_id,
         };
     }
 
@@ -249,11 +297,8 @@ class KickAPI {
         await this.ensureToken();
 
         const body = {
-            events: [
-                { name: 'livestream.status.updated', version: 1 },
-            ],
+            event: 'livestream.status.updated',
             broadcaster_user_id: Number(broadcasterId),
-            method: 'webhook',
         };
         logger.info(`Kick: subscribing to livestream.status.updated for broadcaster ${body.broadcaster_user_id}`);
         const response = await axios.post(
@@ -275,8 +320,11 @@ class KickAPI {
         await this.ensureToken();
 
         await axios.delete(`${this.publicApiBase}/events/subscriptions`, {
-            params: { id: subscriptionId },
-            headers: { Authorization: `Bearer ${this.accessToken}` },
+            data: { subscription_id: subscriptionId },
+            headers: {
+                Authorization: `Bearer ${this.accessToken}`,
+                'Content-Type': 'application/json',
+            },
         });
     }
 

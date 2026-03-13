@@ -210,10 +210,12 @@ class WebhookServer {
             logger.info(`Received Kick webhook event: ${eventType}`);
 
             if (eventType === 'livestream.status.updated') {
-                if (body.is_live === true) {
-                    const slug = body.broadcaster?.channel_slug;
-                    if (slug) {
+                const slug = body.broadcaster?.channel_slug;
+                if (slug) {
+                    if (body.is_live === true) {
                         logger.info(`Kick: ${slug} went live (via webhook)`);
+                        // Sync polling state so polling doesn't re-fire this notification
+                        await this.models.setKickStreamState(slug, true);
                         // Build a minimal livestream object from webhook payload
                         const livestream = {
                             session_title: body.title || 'Live Stream',
@@ -224,11 +226,14 @@ class WebhookServer {
                                 username: body.broadcaster?.username || slug,
                                 profile_pic: body.broadcaster?.profile_picture || null,
                             },
+                            categories: [],
                         };
                         await this.notificationHandler.handleKickStreamOnline(slug, livestream);
+                    } else {
+                        logger.info(`Kick: ${slug} went offline (via webhook)`);
+                        // Sync polling state so polling knows the stream ended
+                        await this.models.setKickStreamState(slug, false);
                     }
-                } else {
-                    logger.info(`Kick: ${body.broadcaster?.channel_slug} went offline`);
                 }
             }
 
