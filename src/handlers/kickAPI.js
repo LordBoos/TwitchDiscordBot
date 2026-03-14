@@ -282,15 +282,15 @@ class KickAPI {
     async fetchPublicKey() {
         try {
             const response = await axios.get(`${this.publicApiBase}/public-key`, { timeout: 10000 });
-            // Response may be the key string directly or nested in an object
-            this.publicKey = response.data?.public_key || response.data;
+            // API returns { data: { public_key: "-----BEGIN PUBLIC KEY-----\n...", algorithm: "RS256" } }
+            this.publicKey = response.data?.data?.public_key || response.data?.public_key || response.data;
             logger.info('Fetched Kick RSA public key for webhook verification');
         } catch (error) {
             logger.warn('Could not fetch Kick public key (webhook signatures unverified):', error.message);
         }
     }
 
-    // Verify RSA-SHA256 webhook signature from Kick
+    // Verify RSA-SHA256 webhook signature from Kick (PKCS1v15 with SHA-256)
     verifyWebhookSignature(messageId, timestamp, rawBody, signatureB64) {
         if (!this.publicKey) {
             logger.error('No Kick public key available, rejecting webhook');
@@ -301,9 +301,11 @@ class KickAPI {
             return false;
         }
         try {
+            // Signature payload: messageId.timestamp.rawBody (per Kick docs)
             const message = `${messageId}.${timestamp}.${rawBody.toString()}`;
             const signature = Buffer.from(signatureB64, 'base64');
-            return crypto.verify('RSA-SHA256', Buffer.from(message), this.publicKey, signature);
+            const key = typeof this.publicKey === 'string' ? this.publicKey : JSON.stringify(this.publicKey);
+            return crypto.verify('sha256', Buffer.from(message), { key, padding: crypto.constants.RSA_PKCS1_PADDING }, signature);
         } catch (error) {
             logger.error('Kick webhook signature verification error:', error.message);
             return false;
