@@ -92,9 +92,18 @@ class KickPollingService {
             const clipFollows = await this.models.getAllKickClipFollows();
             const slugs = [...new Set(clipFollows.map(f => f.streamer_slug))];
 
+            if (slugs.length === 0) {
+                logger.debug('Kick clip polling: no streamers followed for clips');
+                return;
+            }
+
+            logger.info(`Kick clip polling: checking ${slugs.length} streamer(s): ${slugs.join(', ')}`);
+
             for (const slug of slugs) {
                 await this.checkStreamerClips(slug);
             }
+
+            logger.info('Kick clip polling completed');
         } catch (error) {
             logger.error('Error polling Kick clips:', error);
         }
