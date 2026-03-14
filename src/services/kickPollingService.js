@@ -102,9 +102,15 @@ class KickPollingService {
 
     async checkStreamerClips(slug) {
         try {
-            // Get broadcaster_user_id from channel follows (needed for official clips API)
+            // Get broadcaster_user_id — try channel follows first, fall back to API lookup
             const channelFollows = await this.models.getAllKickFollowsForStreamer(slug);
-            const broadcasterUserId = channelFollows.find(f => f.broadcaster_user_id)?.broadcaster_user_id ?? null;
+            let broadcasterUserId = channelFollows.find(f => f.broadcaster_user_id)?.broadcaster_user_id ?? null;
+
+            if (!broadcasterUserId) {
+                // No stream follow or no stored ID — look up the channel via API
+                const channel = await this.kickAPI.getChannelBySlug(slug);
+                broadcasterUserId = channel?.user?.id || channel?.id || null;
+            }
 
             const clips = await this.kickAPI.getRecentClips(slug, broadcasterUserId);
             if (!clips || clips.length === 0) return;
