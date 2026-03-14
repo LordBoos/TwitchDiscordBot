@@ -443,66 +443,50 @@ class KickAPI {
     // Clips (use app token)
     // =========================================================================
 
-    // Get recent clips for a channel — tries official API first, unofficial as fallback
+    // Get recent clips for a channel via the official API.
+    // Prefers user token (broader access) and falls back to app token.
     async getRecentClips(slug, broadcasterUserId = null) {
-        if (this.hasCredentials && broadcasterUserId) {
-            try {
-                const clips = await this.getClipsOfficial(broadcasterUserId);
-                if (clips) return clips;
-            } catch (error) {
-                // 404 means the official /clips endpoint doesn't exist yet — expected, no need to warn
-                if (error.response?.status !== 404) {
-                    const detail = error.response
-                        ? `HTTP ${error.response.status}: ${JSON.stringify(error.response.data)}`
-                        : error.message;
-                    logger.warn(`Kick: official clips fetch failed for ${slug}: ${detail}`);
-                }
-            }
+        if (!this.hasCredentials || !broadcasterUserId) {
+            logger.debug(`Kick: skipping clips fetch for ${slug} (no credentials or broadcaster ID)`);
+            return [];
         }
-        return this.getClipsUnofficial(slug);
-    }
 
-    async getClipsOfficial(broadcasterUserId) {
-        await this.ensureToken();
-        const response = await axios.get(`${this.publicApiBase}/clips`, {
-            params: { broadcaster_user_id: Number(broadcasterUserId), sort: 'date' },
-            headers: {
-                Authorization: `Bearer ${this.accessToken}`,
-                Accept: 'application/json',
-            },
-            timeout: 10000,
-        });
-        // Normalize to match unofficial API shape: array of { id, clip_url, title, ... }
-        const data = response.data?.data;
-        if (!Array.isArray(data)) return null;
-        return data.map(c => ({
-            id: c.id ?? c.clip_id,
-            clip_url: c.clip_url ?? c.url,
-            title: c.title,
-            thumbnail_url: c.thumbnail_url,
-            ...c,
-        }));
-    }
+        // Prefer user token, fall back to app token
+        let token;
+        if (this.hasUserToken) {
+            await this.ensureUserToken();
+            token = this.userAccessToken;
+        } else {
+            await this.ensureToken();
+            token = this.accessToken;
+        }
 
-    async getClipsUnofficial(slug) {
         try {
-            const response = await axios.get(`${this.unofficialApiBase}/v2/channels/${encodeURIComponent(slug)}/clips`, {
-                params: { sort: 'date', time: 'all' },
+            const response = await axios.get(`${this.publicApiBase}/clips`, {
+                params: { broadcaster_user_id: Number(broadcasterUserId), sort: 'date' },
                 headers: {
+                    Authorization: `Bearer ${token}`,
                     Accept: 'application/json',
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                    Referer: 'https://kick.com/',
                 },
                 timeout: 10000,
             });
-            return response.data?.clips || [];
+            // Normalize to a consistent shape: array of { id, clip_url, title, ... }
+            const data = response.data?.data;
+            if (!Array.isArray(data)) return [];
+            return data.map(c => ({
+                id: c.id ?? c.clip_id,
+                clip_url: c.clip_url ?? c.url,
+                title: c.title,
+                thumbnail_url: c.thumbnail_url,
+                ...c,
+            }));
         } catch (error) {
+            // 404 means the clips endpoint may not be available yet — not an error
+            if (error.response?.status === 404) return [];
             const detail = error.response
-                ? `HTTP ${error.response.status}`
+                ? `HTTP ${error.response.status}: ${JSON.stringify(error.response.data)}`
                 : error.message;
-            // 403 is a known issue (Kick blocks server-side requests to unofficial API)
-            const level = error.response?.status === 403 ? 'warn' : 'error';
-            logger[level](`Kick clips unavailable for ${slug} via unofficial API: ${detail}`);
+            logger.warn(`Kick: clips fetch failed for ${slug}: ${detail}`);
             return [];
         }
     }
