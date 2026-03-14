@@ -511,16 +511,16 @@ class KickAPI {
     // Event subscriptions (use USER token — requires events:subscribe scope)
     // =========================================================================
 
-    // Official API: subscribe to livestream status events for a broadcaster.
+    // Official API: subscribe to livestream status events.
     // IMPORTANT: Before this will work, you must enable webhooks in the Kick
     // developer portal (https://kick.com/settings/developer) — edit your app,
     // toggle "Enable Webhooks" ON, and enter your webhook URL (e.g.
     // https://your-domain.com/kick-webhook). Without this, the API returns 400.
     //
-    // Kick's docs show two different event naming conventions:
-    //   - Webhook delivery headers use: "livestream.status.updated"
-    //   - subscribe-to-events.md example uses: "stream_started"
-    // We try all known variations until one succeeds.
+    // The correct request format (confirmed from Kick Go/C#/Java SDKs) uses an
+    // "events" array with { name, version } objects, plus "method": "webhook".
+    // The broadcaster is derived from the authenticated user token — it is NOT
+    // passed in the request body.
     async subscribeToLivestreamStatus(broadcasterId) {
         if (!this.hasCredentials) throw new Error('No Kick credentials configured');
         if (!this.hasUserToken) throw new Error('No Kick user token. Run /kickauth to authorize.');
@@ -533,51 +533,17 @@ class KickAPI {
         };
         const endpoint = `${this.publicApiBase}/events/subscriptions`;
 
-        // First, verify the endpoint works by listing existing subscriptions
-        try {
-            const listResp = await axios.get(endpoint, { headers: { Authorization: headers.Authorization } });
-            logger.info(`Kick: GET subscriptions response: ${JSON.stringify(listResp.data)}`);
-        } catch (listErr) {
-            const detail = listErr.response
-                ? `HTTP ${listErr.response.status}: ${JSON.stringify(listErr.response.data)}`
-                : listErr.message;
-            logger.warn(`Kick: GET subscriptions failed: ${detail}`);
-        }
+        const body = {
+            events: [
+                { name: 'livestream.status.updated', version: 1 },
+            ],
+            method: 'webhook',
+        };
 
-        // Try different event name + body format combinations
-        const bId = broadcasterId;
-        const attempts = [
-            // Documented format from llms.txt
-            { event: 'livestream.status.updated', broadcaster_user_id: Number(bId) },
-            // broadcaster_user_id as string (param spec says "string")
-            { event: 'livestream.status.updated', broadcaster_user_id: String(bId) },
-            // subscribe-to-events.md format (no broadcaster_user_id, different event name)
-            { event: 'stream_started' },
-            // Hybrid: subscribe-to-events.md event name with broadcaster_user_id
-            { event: 'stream_started', broadcaster_user_id: Number(bId) },
-            // Without broadcaster_user_id, dot notation
-            { event: 'livestream.status.updated' },
-            // Test with chat.message.sent (known from docs example) to verify endpoint works at all
-            { event: 'chat.message.sent', broadcaster_user_id: Number(bId) },
-        ];
-
-        let lastError = null;
-        for (const body of attempts) {
-            try {
-                logger.info(`Kick: trying subscription: ${JSON.stringify(body)}`);
-                const response = await axios.post(endpoint, body, { headers });
-                logger.info(`Kick: subscription SUCCEEDED: ${JSON.stringify(body)} → ${JSON.stringify(response.data)}`);
-                return response.data;
-            } catch (error) {
-                const detail = error.response
-                    ? `HTTP ${error.response.status}: ${JSON.stringify(error.response.data)}`
-                    : error.message;
-                logger.warn(`Kick: subscription failed (${JSON.stringify(body)}): ${detail}`);
-                lastError = error;
-            }
-        }
-
-        throw lastError;
+        logger.info(`Kick: subscribing to livestream.status.updated for broadcaster ${broadcasterId}`);
+        const response = await axios.post(endpoint, body, { headers });
+        logger.info(`Kick: subscription created: ${JSON.stringify(response.data)}`);
+        return response.data;
     }
 
     // Official API: delete a subscription by ID
@@ -590,7 +556,7 @@ class KickAPI {
         else await this.ensureToken();
 
         await axios.delete(`${this.publicApiBase}/events/subscriptions`, {
-            data: { subscription_id: subscriptionId },
+            data: { id: [subscriptionId] },
             headers: {
                 Authorization: `Bearer ${token}`,
                 'Content-Type': 'application/json',
