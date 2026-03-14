@@ -384,8 +384,34 @@ class NotificationHandler {
                 return;
             }
 
-            const embed = this.createKickStreamEmbed(slug, livestream);
-            await this.discordBot.sendNotification(channelId, embed, '');
+            const embed = await this.createKickStreamEmbed(slug, livestream, guildId);
+
+            // Get template for message text
+            const template = await this.models.getNotificationTemplate(guildId);
+            let content = '';
+
+            if (template?.message_text && template.message_text.trim() !== '') {
+                const streamerName = livestream.user?.username || slug;
+                const streamTitle = livestream.session_title || 'Live Stream';
+                const category = livestream.categories?.[0]?.name || 'No category';
+
+                const variables = {
+                    '{streamer_name}': streamerName,
+                    '{streamer_login}': slug,
+                    '{stream_title}': streamTitle,
+                    '{game_name}': category,
+                    '{viewer_count}': livestream.viewer_count ? livestream.viewer_count.toLocaleString() : '0',
+                    '{follower_count}': '0'
+                };
+
+                let messageText = template.message_text;
+                Object.entries(variables).forEach(([placeholder, value]) => {
+                    messageText = messageText.replace(new RegExp(placeholder.replace(/[{}]/g, '\\$&'), 'g'), value);
+                });
+                content = messageText;
+            }
+
+            await this.discordBot.sendNotification(channelId, embed, content);
             await this.models.updateKickNotificationCooldown(channelId, slug);
 
             logger.info(`Sent Kick notification for ${slug} to channel ${channelId}`);
@@ -394,7 +420,7 @@ class NotificationHandler {
         }
     }
 
-    createKickStreamEmbed(slug, livestream) {
+    async createKickStreamEmbed(slug, livestream, guildId) {
         const streamerName = livestream.user?.username || slug;
         const streamTitle  = livestream.session_title || 'Live Stream';
         const streamUrl    = `https://kick.com/${slug}`;
@@ -402,27 +428,70 @@ class NotificationHandler {
         const viewers      = livestream.viewer_count ?? null;
         const profilePic   = livestream.user?.profile_pic || null;
 
+        // Get custom template for this guild (same template as Twitch)
+        const template = await this.models.getNotificationTemplate(guildId);
+
+        // Template variables for replacement
+        const variables = {
+            '{streamer_name}': streamerName,
+            '{streamer_login}': slug,
+            '{stream_title}': streamTitle,
+            '{game_name}': category || 'No category',
+            '{viewer_count}': viewers !== null ? viewers.toLocaleString() : '0',
+            '{follower_count}': '0'
+        };
+
+        // Apply template or use Kick-specific defaults
+        let title = template?.title_template || '🟢 {streamer_name} is now live on Kick!';
+        let description = template?.description_template || '{stream_title}';
+
+        // Replace variables in templates
+        Object.entries(variables).forEach(([placeholder, value]) => {
+            title = title.replace(new RegExp(placeholder.replace(/[{}]/g, '\\$&'), 'g'), value);
+            description = description.replace(new RegExp(placeholder.replace(/[{}]/g, '\\$&'), 'g'), value);
+        });
+
         const embed = new EmbedBuilder()
-            .setTitle(`🟢 ${streamerName} is now live on Kick!`)
+            .setTitle(title)
             .setURL(streamUrl)
             .setColor(0x53FC18) // Kick green
-            .setDescription(`**${streamTitle}**`)
             .setTimestamp();
+
+        if (description && description.trim() !== '') {
+            embed.setDescription(`**${description}**`);
+        }
 
         if (profilePic) embed.setThumbnail(profilePic);
 
         const fields = [];
-        if (category) {
-            fields.push({ name: '🎮 Category', value: category, inline: true });
+
+        // Game/Category field (inline) — respects template show_game setting
+        if (template?.show_game !== false && category) {
+            fields.push({
+                name: template?.game_field_name || '🎮 Game',
+                value: category,
+                inline: true
+            });
         }
-        if (viewers !== null) {
-            fields.push({ name: '👥 Viewers', value: viewers.toLocaleString(), inline: true });
-        }
+
+        // Followers field — Kick doesn't provide follower count, so skip unless template forces it
+        // (kept for consistency but value will be '0')
+
+        // Watch field (inline)
         fields.push({
-            name: '📺 Watch',
-            value: `[Open Stream](${streamUrl})`,
+            name: template?.watch_field_name || '📺 Watch',
+            value: `[${template?.open_stream_text || 'Open Stream'}](${streamUrl})`,
             inline: true,
         });
+
+        // Viewers field
+        if (template?.show_viewers === true && viewers !== null) {
+            fields.push({
+                name: template?.viewers_field_name || '👥 Viewers',
+                value: viewers.toLocaleString(),
+                inline: true
+            });
+        }
 
         embed.addFields(fields);
         return embed;
