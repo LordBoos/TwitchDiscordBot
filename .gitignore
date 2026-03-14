@@ -54,9 +54,10 @@ jspm_packages/
 # Yarn Integrity file
 .yarn-integrity
 
-# IDE files
+# IDE / tool files
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 *~
