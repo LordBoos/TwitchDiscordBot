@@ -445,15 +445,21 @@ class KickAPI {
     // Clips (use app token)
     // =========================================================================
 
-    // Get recent clips for a channel via the official API.
-    // Prefers user token (broader access) and falls back to app token.
+    // Get recent clips for a channel.
+    // Tries the official API first (if/when a clips endpoint exists), then falls
+    // back to the unofficial website API.
     async getRecentClips(slug, broadcasterUserId = null) {
-        if (!this.hasCredentials || !broadcasterUserId) {
-            logger.debug(`Kick: skipping clips fetch for ${slug} (no credentials or broadcaster ID)`);
-            return [];
+        // Try official API if we have credentials and a broadcaster ID
+        if (this.hasCredentials && broadcasterUserId) {
+            const officialClips = await this.getClipsOfficial(slug, broadcasterUserId);
+            if (officialClips && officialClips.length > 0) return officialClips;
         }
 
-        // Prefer user token, fall back to app token
+        // Fall back to unofficial website API
+        return this.getClipsUnofficial(slug);
+    }
+
+    async getClipsOfficial(slug, broadcasterUserId) {
         let token;
         if (this.hasUserToken) {
             await this.ensureUserToken();
@@ -472,23 +478,56 @@ class KickAPI {
                 },
                 timeout: 10000,
             });
-            // Normalize to a consistent shape: array of { id, clip_url, title, ... }
             const data = response.data?.data;
-            if (!Array.isArray(data)) return [];
+            if (!Array.isArray(data) || data.length === 0) return [];
             return data.map(c => ({
                 id: c.id ?? c.clip_id,
                 clip_url: c.clip_url ?? c.url,
                 title: c.title,
                 thumbnail_url: c.thumbnail_url,
+                created_at: c.created_at,
                 ...c,
             }));
         } catch (error) {
-            // 404 means the clips endpoint may not be available yet — not an error
+            // 404 means the clips endpoint doesn't exist yet — expected, fall through silently
             if (error.response?.status === 404) return [];
             const detail = error.response
                 ? `HTTP ${error.response.status}: ${JSON.stringify(error.response.data)}`
                 : error.message;
-            logger.warn(`Kick: clips fetch failed for ${slug}: ${detail}`);
+            logger.warn(`Kick: official clips fetch failed for ${slug}: ${detail}`);
+            return [];
+        }
+    }
+
+    async getClipsUnofficial(slug) {
+        try {
+            const response = await axios.get(`${this.unofficialApiBase}/v2/channels/${encodeURIComponent(slug)}/clips`, {
+                params: { sort: 'date', time: 'all' },
+                headers: {
+                    Accept: 'application/json',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                    Referer: 'https://kick.com/',
+                    Origin: 'https://kick.com',
+                },
+                timeout: 10000,
+            });
+            const clips = response.data?.clips || [];
+            // Normalize to consistent shape
+            return clips.map(c => ({
+                id: c.id ?? c.clip_id,
+                clip_url: c.clip_url || c.url || `https://kick.com/${slug}?clip=${c.id}`,
+                title: c.title,
+                thumbnail_url: c.thumbnail_url || c.thumbnail,
+                created_at: c.created_at,
+                creator: c.creator,
+                ...c,
+            }));
+        } catch (error) {
+            const status = error.response?.status;
+            // 403 is common (Kick blocks some server IPs) — log at debug to reduce noise
+            const level = status === 403 ? 'debug' : 'warn';
+            const detail = error.response ? `HTTP ${status}` : error.message;
+            logger[level](`Kick: unofficial clips unavailable for ${slug}: ${detail}`);
             return [];
         }
     }
