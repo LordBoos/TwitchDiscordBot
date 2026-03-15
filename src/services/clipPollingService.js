@@ -290,19 +290,27 @@ class ClipPollingService {
             // Get all Discord messages for this clip
             const discordMessages = await this.models.getClipDiscordMessages(clipId);
 
+            // Fetch clip data once for all messages
+            const clipData = await this.twitchAPI.getClipById(clipId);
+            if (!clipData) {
+                logger.warn(`Could not fetch clip data for ${clipId} to update message`);
+                return;
+            }
+
             // Update each Discord message
             for (const messageRecord of discordMessages) {
                 try {
-                    // Get the clip template for this guild
-                    const template = await this.models.getClipNotificationTemplate(messageRecord.channel_id);
-                    const messageTemplate = template?.message_template || '{creator} just created a new clip on {streamer} channel\n{title}\n{url}';
-
-                    // Get current clip data to rebuild the message
-                    const clipData = await this.twitchAPI.getClipById(clipId);
-                    if (!clipData) {
-                        logger.warn(`Could not fetch clip data for ${clipId} to update message`);
+                    // Resolve the guild_id from the Discord channel
+                    const channel = await this.notificationHandler.discordBot.client.channels.fetch(messageRecord.channel_id);
+                    if (!channel) {
+                        logger.warn(`Could not find channel ${messageRecord.channel_id} to update clip message`);
                         continue;
                     }
+                    const guildId = channel.guild?.id;
+
+                    // Get the clip template for this guild
+                    const template = guildId ? await this.models.getClipNotificationTemplate(guildId) : null;
+                    const messageTemplate = template?.message_template || '{creator} just created a new clip on {streamer} channel\n{title}\n{url}';
 
                     // Template variables for replacement
                     const variables = {
@@ -319,8 +327,9 @@ class ClipPollingService {
                     });
 
                     // Update the Discord message
-                    await this.notificationHandler.discordBot.editMessage(messageRecord.channel_id, messageRecord.message_id, newMessage);
-                    logger.info(`✅ Updated Discord message for clip title change: ${clipId}`);
+                    const message = await channel.messages.fetch(messageRecord.message_id);
+                    await message.edit(newMessage);
+                    logger.info(`Updated Discord message for clip title change: ${clipId}`);
 
                 } catch (editError) {
                     logger.error(`Failed to update Discord message ${messageRecord.message_id} for clip ${clipId}:`, editError);
