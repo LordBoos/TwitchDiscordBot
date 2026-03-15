@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, MessageFlags } = require('discord.js');
 const logger = require('../utils/logger');
 
 module.exports = {
@@ -104,7 +104,7 @@ module.exports = {
         const subcommand = interaction.options.getSubcommand();
         const guildId = interaction.guild.id;
 
-        await interaction.deferReply();
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         try {
             switch (subcommand) {
@@ -131,7 +131,7 @@ module.exports = {
             logger.error(`Error in template command:`, error);
             await interaction.editReply({
                 content: '❌ An error occurred while managing the template. Please try again later.',
-                ephemeral: true
+
             });
         }
     },
@@ -147,7 +147,7 @@ module.exports = {
         if (!titleHasVariable) {
             return await interaction.editReply({
                 content: '❌ Title template must contain at least one variable. Use `/template variables` to see available variables.',
-                ephemeral: true
+
             });
         }
 

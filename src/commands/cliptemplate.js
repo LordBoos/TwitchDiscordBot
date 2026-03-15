@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, MessageFlags } = require('discord.js');
 const logger = require('../utils/logger');
 
 module.exports = {
@@ -57,7 +57,7 @@ module.exports = {
         const subcommand = interaction.options.getSubcommand();
         const guildId = interaction.guild.id;
 
-        await interaction.deferReply();
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         try {
             switch (subcommand) {
@@ -84,7 +84,7 @@ module.exports = {
             logger.error(`Error in cliptemplate command:`, error);
             await interaction.editReply({
                 content: '❌ An error occurred while managing clip templates. Please try again later.',
-                ephemeral: true
+
             });
         }
     },
@@ -185,7 +185,7 @@ module.exports = {
         if (lineNumber > lines.length) {
             await interaction.editReply({
                 content: `❌ Line ${lineNumber} doesn't exist. The template only has ${lines.length} lines.`,
-                ephemeral: true
+
             });
             return;
         }

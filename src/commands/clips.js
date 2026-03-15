@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, MessageFlags } = require('discord.js');
 const logger = require('../utils/logger');
 
 module.exports = {
@@ -39,7 +39,7 @@ module.exports = {
         const channelId = interaction.channel.id;
         const guildId = interaction.guild.id;
 
-        await interaction.deferReply();
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         try {
             switch (subcommand) {
@@ -57,7 +57,7 @@ module.exports = {
             logger.error(`Error in clips command:`, error);
             await interaction.editReply({
                 content: '❌ An error occurred while managing clip follows. Please try again later.',
-                ephemeral: true
+
             });
         }
     },
@@ -72,7 +72,7 @@ module.exports = {
         if (!/^[a-zA-Z0-9_]{1,25}$/.test(streamerName)) {
             return await interaction.editReply({
                 content: '❌ Invalid streamer name. Twitch usernames can only contain letters, numbers, and underscores.',
-                ephemeral: true
+
             });
         }
 
@@ -82,7 +82,7 @@ module.exports = {
             if (!userData) {
                 return await interaction.editReply({
                     content: `❌ Streamer **${streamerName}** not found on Twitch.`,
-                    ephemeral: true
+    
                 });
             }
 
@@ -93,7 +93,7 @@ module.exports = {
             if (isAlreadyFollowing) {
                 return await interaction.editReply({
                     content: `❌ This channel is already following **${streamerName}** for clip notifications.`,
-                    ephemeral: true
+    
                 });
             }
 
@@ -132,7 +132,7 @@ module.exports = {
             logger.error(`Error adding clip follow for ${streamerName}:`, error);
             await interaction.editReply({
                 content: '❌ Failed to add clip follow. Please try again later.',
-                ephemeral: true
+
             });
         }
     },
@@ -148,7 +148,7 @@ module.exports = {
             if (!isFollowing) {
                 return await interaction.editReply({
                     content: `❌ This channel is not following **${streamerName}** for clip notifications.`,
-                    ephemeral: true
+    
                 });
             }
 
@@ -197,7 +197,7 @@ module.exports = {
             logger.error(`Error removing clip follow for ${streamerName}:`, error);
             await interaction.editReply({
                 content: '❌ Failed to remove clip follow. Please try again later.',
-                ephemeral: true
+
             });
         }
     },
@@ -243,7 +243,7 @@ module.exports = {
             logger.error(`Error listing clip follows for channel ${channelId}:`, error);
             await interaction.editReply({
                 content: '❌ Failed to list clip follows. Please try again later.',
-                ephemeral: true
+
             });
         }
     }

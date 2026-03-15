@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits, MessageFlags } = require('discord.js');
 const logger = require('../utils/logger');
 
 module.exports = {
@@ -39,7 +39,7 @@ module.exports = {
         const streamerName = interaction.options.getString('streamer').toLowerCase().trim();
         const channelId = interaction.channel.id;
 
-        await interaction.deferReply();
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         try {
             // Check if we're following this streamer
@@ -51,7 +51,7 @@ module.exports = {
             if (!isFollowing) {
                 return await interaction.editReply({
                     content: `❌ This channel is not following **${streamerName}**!`,
-                    ephemeral: true
+    
                 });
             }
 
@@ -81,7 +81,7 @@ module.exports = {
             logger.error(`Error in unfollow command:`, error);
             await interaction.editReply({
                 content: '❌ An error occurred while trying to unfollow this streamer. Please try again later.',
-                ephemeral: true
+
             });
         }
     },

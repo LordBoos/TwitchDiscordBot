@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, MessageFlags } = require('discord.js');
 const logger = require('../utils/logger');
 
 module.exports = {
@@ -10,7 +10,7 @@ module.exports = {
     async execute(interaction, models, twitchAPI) {
         const channelId = interaction.channel.id;
 
-        await interaction.deferReply();
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         try {
             const follows = await models.getChannelFollows(channelId);
@@ -55,7 +55,7 @@ module.exports = {
             logger.error(`Error in list command:`, error);
             await interaction.editReply({
                 content: '❌ An error occurred while retrieving the list of followed streamers. Please try again later.',
-                ephemeral: true
+
             });
         }
     },

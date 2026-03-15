@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits, MessageFlags } = require('discord.js');
 const logger = require('../utils/logger');
 
 module.exports = {
@@ -18,7 +18,7 @@ module.exports = {
         const channelId = interaction.channel.id;
         const guildId = interaction.guild.id;
 
-        await interaction.deferReply();
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         try {
             // Check if already following this streamer in this channel
@@ -30,7 +30,7 @@ module.exports = {
             if (alreadyFollowing) {
                 return await interaction.editReply({
                     content: `❌ This channel is already following **${streamerName}**!`,
-                    ephemeral: true
+    
                 });
             }
 
@@ -39,7 +39,7 @@ module.exports = {
             if (!twitchUser) {
                 return await interaction.editReply({
                     content: `❌ Twitch user **${streamerName}** not found. Please check the username and try again.`,
-                    ephemeral: true
+    
                 });
             }
 
@@ -69,7 +69,7 @@ module.exports = {
             logger.error(`Error in follow command:`, error);
             await interaction.editReply({
                 content: '❌ An error occurred while trying to follow this streamer. Please try again later.',
-                ephemeral: true
+
             });
         }
     },
