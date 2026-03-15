@@ -1,38 +1,49 @@
-# Twitch → Discord Bot
+# Twitch & Kick → Discord Bot
 
-A comprehensive Discord bot that monitors Twitch streamers and clips, sending real-time notifications to Discord channels using Twitch EventSub webhooks and polling-based clip detection.
+A comprehensive Discord bot that monitors Twitch and Kick streamers and clips, sending real-time notifications to Discord channels using webhooks and polling-based detection.
 
-## 🎯 Features
+## Features
 
 ### Discord Integration
-- **Slash Commands**: `/follow`, `/unfollow`, `/list`, `/status`, `/ping`, `/template`, `/clips`, `/cliptemplate`
-- **Dual Command Deployment**: Both global and guild commands for immediate availability and long-term stability
+- **Slash Commands**: Full command suite for Twitch and Kick management
+- **Ephemeral Responses**: All command responses are only visible to the user who invoked them
+- **Dual Command Deployment**: Both global and guild commands for immediate availability
 - **Autocomplete**: Discord autosuggests parameters for better UX
 - **Per-Channel Management**: Each Discord channel maintains its own list of followed streamers
-- **Permission-Based**: All commands require ManageChannels permission for security
+- **Permission-Based**: All commands require ManageChannels permission
 
 ### Twitch Integration
 - **EventSub Webhooks**: Real-time stream notifications (no polling)
-- **Clip Polling**: Automatic detection of new clips with 1-minute intervals
+- **Clip Polling**: Automatic detection of new clips with 5-minute intervals
+- **Clip Title Tracking**: Detects clip title changes and updates Discord messages
+- **Clip Deletion Handling**: Removes Discord messages when clips are deleted on Twitch
 - **Smart Subscription Management**: Automatic deduplication and cleanup
 - **OAuth Token Management**: Automatic token renewal
-- **Rich Stream Data**: Fetches title, category, thumbnail, viewer count, follower count
+
+### Kick Integration
+- **Webhook Notifications**: Real-time stream notifications via Kick EventSub
+- **OAuth 2.1 PKCE Flow**: Full user authorization for webhook subscriptions
+- **Polling Fallback**: Automatic stream polling when webhooks aren't configured (2-minute intervals)
+- **Clip Polling**: Automatic detection of new Kick clips
+- **Shared Templates**: Kick notifications use the same customizable templates as Twitch
+- **Rich Embeds**: Stream thumbnail, category, follower count, and profile picture
 
 ### Stream Notifications
 - **Rich Embeds**: Beautiful notifications with stream info, thumbnails, and links
 - **Customizable Templates**: Per-guild message templates with variable substitution
-- **Game Information**: Prominently displayed game/category with optional game banner images
+- **Game Information**: Prominently displayed game/category
 - **Follower Count**: Shows current follower count in notifications
+- **Stream Preview**: Large stream thumbnail screenshot in notifications
 - **Customizable Fields**: Toggle and customize field names (Game, Followers, Watch button text)
-- **Anti-Spam Protection**: 30-second cooldown per streamer per channel
+- **Anti-Spam Protection**: Configurable cooldown per streamer per channel
 - **Role Mentions**: Optional role pings for specific game categories
-- **Automatic Cleanup**: Removes unused EventSub subscriptions
 
 ### Clip Notifications
 - **Real-time Clip Detection**: Polling-based system to detect new clips
 - **Customizable Templates**: Line-by-line template editing with `/cliptemplate` command
-- **Automatic Deletion Handling**: Removes Discord messages when clips are deleted on Twitch
-- **No Cooldown**: Immediate notifications for all new clips
+- **Automatic Deletion Handling**: Removes Discord messages when clips are deleted
+- **Title Change Tracking**: Updates Discord messages when clip titles are edited
+- **Startup Repair**: Automatically fixes any clip messages with wrong template formatting on restart
 - **Hyperlink Support**: Direct links to clips with proper formatting
 
 ### Deployment & Infrastructure
@@ -40,18 +51,17 @@ A comprehensive Discord bot that monitors Twitch streamers and clips, sending re
 - **SQLite Database**: Persistent storage with automatic schema management and migrations
 - **Environment Configuration**: Secure credential management
 - **Production Logging**: Comprehensive logging with Winston and console output
-- **Health Monitoring**: Built-in health check endpoint for monitoring
+- **Health Monitoring**: Built-in health check endpoint
 - **Automatic Migrations**: Database schema updates applied automatically on startup
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 - Node.js 18+ or Docker
 - Discord Bot Token and Client ID
 - Twitch Client ID and Secret
-- **🌐 Public HTTPS webhook URL** (required for Twitch EventSub)
-  - Use a domain with SSL certificate, or
-  - Use ngrok for testing: `ngrok http 8081`
+- (Optional) Kick Client ID and Secret for Kick integration
+- **Public HTTPS webhook URL** (required for Twitch EventSub and Kick webhooks)
 
 ### 1. Clone and Setup
 ```bash
@@ -76,6 +86,10 @@ WEBHOOK_SECRET=your_webhook_secret_here
 WEBHOOK_PORT=8081
 WEBHOOK_URL=https://your-domain.com/webhook
 
+# Kick API Configuration (optional)
+KICK_CLIENT_ID=your_kick_client_id_here
+KICK_CLIENT_SECRET=your_kick_client_secret_here
+
 # Database Configuration
 DATABASE_PATH=./data/bot.db
 
@@ -84,6 +98,7 @@ LOG_LEVEL=info
 
 # Anti-spam Configuration
 NOTIFICATION_COOLDOWN_SECONDS=30
+KICK_NOTIFICATION_COOLDOWN_SECONDS=300
 ```
 
 ### 3. Run the Bot
@@ -99,91 +114,87 @@ npm install
 npm start
 ```
 
-**Note**: Commands are automatically deployed on bot startup with dual deployment (global + guild) for immediate availability.
+Commands are automatically deployed on bot startup with dual deployment (global + guild) for immediate availability.
 
-## 🎬 Clip Notification System
+## Kick Setup
 
-The bot features a comprehensive clip notification system that works alongside stream notifications:
+Kick integration is optional. Without Kick credentials, only Twitch features are available.
 
-### How It Works
-1. **Polling-Based Detection**: Checks for new clips every minute using Twitch API
-2. **Separate Following**: Use `/clips follow` to track clips independently from stream notifications
-3. **Smart Deduplication**: Prevents duplicate notifications using clip ID tracking
-4. **Automatic Cleanup**: Removes Discord messages when clips are deleted on Twitch
-5. **Customizable Templates**: Line-by-line template editing for perfect formatting
+### 1. Create a Kick App
+1. Go to [Kick Developer Settings](https://kick.com/settings/developer)
+2. Create a new application
+3. Copy Client ID and Client Secret to `.env`
+4. Enable webhooks in the developer portal
+5. Set webhook URL to `https://your-domain.com/kick-webhook`
+6. Set redirect URI to `https://your-domain.com/kick-auth/callback`
 
-### Setting Up Clip Notifications
-```bash
-# Follow a streamer for clip notifications
-/clips follow streamer:ninja
+### 2. Authorize for Webhooks
+Kick webhook subscriptions require a user access token (not just app credentials):
 
-# Customize the notification template
-/cliptemplate view                                    # See current template
-/cliptemplate setline line:1 text:🎥 New clip by {creator}!
-/cliptemplate setline line:2 text:📺 {streamer} - {title}
-/cliptemplate setline line:3 text:🔗 {url}
+1. Run `/kickauth` in Discord — it generates an authorization URL
+2. Open the URL in your browser and authorize the app
+3. The bot exchanges the code for tokens and auto-subscribes to all followed Kick streamers
+4. Tokens are stored in the database and refreshed automatically
 
-# Preview your template
-/cliptemplate preview
-```
+Without user authorization, Kick stream notifications fall back to polling (2-minute delay).
 
-### Template Editing Tips
-- **Line-by-Line**: Use `/cliptemplate setline` for easy editing
-- **Remove Lines**: Use `/cliptemplate removeline` to delete unwanted lines
-- **No Escape Characters**: No need for `\n` - each line is handled separately
-- **Variables Available**: `{streamer}`, `{creator}`, `{title}`, `{url}`
+## Commands
 
-## 📋 Commands
+### Twitch Stream Management
+| Command | Description |
+|---------|-------------|
+| `/follow <streamer>` | Follow a Twitch streamer for stream notifications |
+| `/unfollow <streamer>` | Stop following a Twitch streamer |
+| `/list` | List all followed Twitch streamers in this channel |
 
-### Stream Management
-| Command | Description | Options |
-|---------|-------------|---------|
-| `/follow <streamer>` | Start following a Twitch streamer | `streamer`: Twitch username |
-| `/unfollow <streamer>` | Stop following a streamer | `streamer`: Autocomplete from followed |
-| `/list` | Show all followed streamers in channel | None |
+### Twitch Clip Management
+| Command | Description |
+|---------|-------------|
+| `/clips follow <streamer>` | Follow a streamer for clip notifications |
+| `/clips unfollow <streamer>` | Stop following clips from a streamer |
+| `/clips list` | List all followed streamers for clips |
 
-### Stream Notification Templates
-| Command | Subcommand | Description | Options |
-|---------|------------|-------------|---------|
-| `/template` | `set` | Set custom stream notification embed templates | `title`: Title template, `description`: Description template |
-| `/template` | `message` | Set plain text message above embed | `text`: Message text (leave empty to remove) |
-| `/template` | `fields` | Customize notification field names and visibility | Various field options |
-| `/template` | `view` | View current template with variables | None |
-| `/template` | `reset` | Reset to default template | None |
-| `/template` | `variables` | Show available template variables | None |
+### Kick Management
+| Command | Description |
+|---------|-------------|
+| `/kickfollow <streamer>` | Follow a Kick streamer for stream notifications |
+| `/kickunfollow <streamer>` | Stop following a Kick streamer |
+| `/kickclips follow <streamer>` | Follow a Kick streamer for clip notifications |
+| `/kickclips unfollow <streamer>` | Stop following Kick clips from a streamer |
+| `/kickclips list` | List all followed Kick streamers for clips |
+| `/kickauth` | Authorize the bot for Kick webhook notifications (Admin only) |
 
-### Clip Management
-| Command | Subcommand | Description | Options |
-|---------|------------|-------------|---------|
-| `/clips` | `follow` | Start following clips from a streamer | `streamer`: Twitch username |
-| `/clips` | `unfollow` | Stop following clips from a streamer | `streamer`: Autocomplete from followed |
-| `/clips` | `list` | Show all followed streamers for clips | None |
-
-### Clip Notification Templates
-| Command | Subcommand | Description | Options |
-|---------|------------|-------------|---------|
-| `/cliptemplate` | `set` | Set entire clip notification template | `template`: Full template text |
-| `/cliptemplate` | `setline` | Set a specific line of template | `line`: Line number (1-5), `text`: Line content |
-| `/cliptemplate` | `removeline` | Remove a specific line from template | `line`: Line number to remove |
-| `/cliptemplate` | `view` | View current template with line numbers | None |
-| `/cliptemplate` | `reset` | Reset to default template | None |
-| `/cliptemplate` | `preview` | Preview template with sample data | None |
+### Notification Templates
+| Command | Description |
+|---------|-------------|
+| `/template set` | Set custom stream notification embed templates |
+| `/template message` | Set plain text message above embed |
+| `/template fields` | Customize notification field names and visibility |
+| `/template view` | View current template with variables |
+| `/template reset` | Reset to default template |
+| `/template variables` | Show available template variables |
+| `/cliptemplate set` | Set entire clip notification template |
+| `/cliptemplate setline` | Set a specific line of the clip template |
+| `/cliptemplate removeline` | Remove a specific line from clip template |
+| `/cliptemplate view` | View current clip template |
+| `/cliptemplate reset` | Reset clip template to default |
+| `/cliptemplate preview` | Preview clip template with sample data |
 
 ### Bot Management
-| Command | Description | Options |
-|---------|-------------|---------|
-| `/status` | Display bot status and subscriptions | None (ephemeral) |
-| `/ping` | Test bot responsiveness | None |
+| Command | Description |
+|---------|-------------|
+| `/status` | Display bot status and active subscriptions |
+| `/ping` | Test bot responsiveness |
 
 ### Template Variables
 
-#### Stream Templates
-- `{streamer}` - Channel name
-- `{title}` - Stream title
-- `{game}` - Game/category being played
-- `{viewers}` - Current viewer count
-- `{followers}` - Total follower count
-- `{url}` - Stream URL
+#### Stream Templates (Twitch & Kick)
+- `{streamer_name}` - Display name of the streamer
+- `{streamer_login}` - Login/slug of the streamer
+- `{stream_title}` - Stream title
+- `{game_name}` - Game/category being played
+- `{viewer_count}` - Current viewer count
+- `{follower_count}` - Total follower count
 
 #### Clip Templates
 - `{streamer}` - Channel name where clip was created
@@ -191,51 +202,59 @@ The bot features a comprehensive clip notification system that works alongside s
 - `{title}` - Title of the clip
 - `{url}` - Direct link to the clip
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
 │   Discord Bot   │    │  Webhook Server  │    │   Twitch API    │
 │                 │    │                  │    │                 │
-│ • Slash Commands│◄──►│ • EventSub       │◄──►│ • OAuth         │
-│ • Notifications │    │ • Verification   │    │ • Stream Data   │
-│ • Autocomplete  │    │ • Health Check   │    │ • Subscriptions │
-│ • Templates     │    │ • Clip Polling   │    │ • Clip Data     │
+│ • Slash Commands│◄──►│ • Twitch EventSub│◄──►│ • OAuth         │
+│ • Notifications │    │ • Kick Webhooks  │    │ • Stream Data   │
+│ • Autocomplete  │    │ • OAuth Callback │    │ • Subscriptions │
+│ • Templates     │    │ • Health Check   │    │ • Clip Data     │
 └─────────────────┘    └──────────────────┘    └─────────────────┘
          │                        │                        │
+         │              ┌──────────────────┐               │
+         │              │    Kick API      │               │
+         │              │                  │               │
+         │              │ • OAuth 2.1 PKCE │               │
+         │              │ • Livestreams    │               │
+         │              │ • Channels       │               │
+         │              │ • Event Subs     │               │
+         │              └──────────────────┘               │
          ▼                        ▼                        ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                     SQLite Database                             │
 │                                                                 │
-│ • channel_follows           • eventsub_subscriptions           │
-│ • notification_cooldowns    • twitch_tokens                    │
-│ • game_role_mentions        • notification_templates           │
-│ • clip_follows              • clip_notification_templates      │
-│ • clip_polling_state        • sent_clips                       │
+│ Twitch:                        Kick:                           │
+│ • channel_follows              • kick_channel_follows          │
+│ • eventsub_subscriptions       • kick_eventsub_subscriptions   │
+│ • notification_cooldowns       • kick_notification_cooldowns   │
+│ • twitch_tokens                • kick_user_tokens              │
+│ • clip_follows                 • kick_clip_follows             │
+│ • clip_polling_state           • kick_clip_polling_state       │
+│ • clip_discord_messages        • kick_clip_discord_messages    │
+│                                • kick_stream_polling_state     │
+│ Shared:                                                        │
+│ • notification_templates       • clip_notification_templates   │
+│ • game_role_mentions                                           │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ### Key Components
 
-#### Discord Bot
-- **Command Handler**: Processes slash commands with autocomplete
-- **Notification System**: Sends rich embeds for streams and clips
-- **Template Engine**: Customizable message templates with variable substitution
-- **Permission Management**: ManageChannels permission required for all commands
+#### Polling Services
+- **Clip Polling Service**: Checks for new Twitch clips every 5 minutes
+- **Kick Polling Service**: Checks Kick stream status (2-minute intervals) and clips when webhooks aren't available
+- **Startup Repair**: Fixes clip messages with incorrect template formatting on boot
 
 #### Webhook Server
-- **EventSub Handler**: Processes Twitch stream.online events
-- **Clip Polling Service**: Checks for new clips every minute
-- **Health Check**: Monitoring endpoint for uptime checks
-- **Security**: Webhook signature verification
+- **Twitch EventSub**: Processes stream.online events with signature verification
+- **Kick Webhooks**: Processes livestream.status.updated events with public key verification
+- **Kick OAuth Callback**: Handles authorization code exchange for PKCE flow
+- **Health Check**: `GET /health` endpoint for uptime monitoring
 
-#### Database Layer
-- **Stream Management**: Tracks followed streamers per Discord channel
-- **Clip Management**: Separate tracking for clip notifications
-- **Template Storage**: Per-guild customizable notification templates
-- **State Management**: Polling state, cooldowns, and sent notifications
-
-## 🔧 Configuration
+## Configuration
 
 ### Discord Bot Setup
 1. Go to [Discord Developer Portal](https://discord.com/developers/applications)
@@ -249,142 +268,87 @@ The bot features a comprehensive clip notification system that works alongside s
 1. Go to [Twitch Developer Console](https://dev.twitch.tv/console)
 2. Create a new application
 3. Copy Client ID and Client Secret
-4. Set OAuth Redirect URL (not needed for this bot)
 
-### 🌐 Webhook Setup (HTTPS Required)
+### Webhook Setup (HTTPS Required)
 
-**Twitch EventSub only accepts HTTPS webhooks.** Choose one of these options:
+**Both Twitch EventSub and Kick webhooks require HTTPS.**
 
 #### Option A: Production Domain (Recommended)
 1. Use a domain with a valid SSL certificate
 2. Set `WEBHOOK_URL=https://your-domain.com/webhook`
-3. Ensure port 8081 is accessible from the internet
+3. Ensure the webhook port is accessible from the internet
 
 #### Option B: Testing with ngrok
 1. Install ngrok: https://ngrok.com/download
-2. Start your bot: `npm start` or `docker-compose up`
+2. Start your bot: `npm start`
 3. In another terminal: `ngrok http 8081`
-4. Copy the HTTPS URL: `https://abc123.ngrok.io`
-5. Set `WEBHOOK_URL=https://abc123.ngrok.io/webhook`
-6. Restart the bot with the new URL
+4. Set `WEBHOOK_URL=https://abc123.ngrok.io/webhook`
+5. Restart the bot
 
-#### Option C: Reverse Proxy (Advanced)
+#### Option C: Reverse Proxy
 - Use nginx, Cloudflare Tunnel, or similar
 - Ensure HTTPS termination and proper forwarding
 
-### Webhook Configuration
+### Webhook Endpoints
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /webhook` | Twitch EventSub notifications |
+| `POST /kick-webhook` | Kick livestream event notifications |
+| `GET /kick-auth/callback` | Kick OAuth authorization callback |
+| `GET /health` | Health check for monitoring |
 
-⚠️ **CRITICAL**: Twitch EventSub requires HTTPS webhooks. HTTP will not work!
-
-- **WEBHOOK_URL**: Must be publicly accessible via HTTPS
-  - ✅ Production: `https://your-domain.com/webhook` (with valid SSL certificate)
-  - ✅ Testing: Use ngrok: `ngrok http 8081` → `https://abc123.ngrok.io/webhook`
-  - ❌ HTTP URLs will be rejected by Twitch
-  - ❌ Localhost/private IPs will not work
-- **WEBHOOK_SECRET**: Generate a secure random string (64+ characters)
-- **WEBHOOK_PORT**: Port for the Express server (default: 8081)
-
-## 📊 Database Schema
-
-The bot uses SQLite with automatic migrations and the following tables:
-
-### Core Tables
-- **channel_follows**: Maps Discord channels to followed Twitch streamers for stream notifications
-- **clip_follows**: Maps Discord channels to followed Twitch streamers for clip notifications
-- **eventsub_subscriptions**: Tracks active Twitch EventSub subscriptions
-- **notification_cooldowns**: Prevents spam notifications with configurable cooldowns
-- **twitch_tokens**: Stores OAuth tokens for Twitch API with automatic renewal
-
-### Template System
-- **notification_templates**: Per-guild customizable stream notification templates
-- **clip_notification_templates**: Per-guild customizable clip notification templates
-
-### Clip Management
-- **sent_clips**: Tracks sent clip notifications to prevent duplicates and handle deletions
-- **clip_polling_state**: Maintains polling state and cursor for efficient clip detection
-
-### Optional Features
-- **game_role_mentions**: Optional role mentions for specific games/categories
-
-## 🚨 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 
 **Bot not responding to commands:**
-- Commands are automatically deployed on startup (no manual deployment needed)
+- Commands are automatically deployed on startup
 - Check bot permissions in Discord server (ManageChannels required)
 - Verify `DISCORD_TOKEN` and `DISCORD_CLIENT_ID`
-- Check logs for command deployment success messages
 
-**Webhook verification failing:**
-- Ensure `WEBHOOK_URL` is publicly accessible via **HTTPS** (not HTTP)
-- Verify SSL certificate is valid (test with `curl -I https://your-domain.com/webhook`)
-- Check `WEBHOOK_SECRET` matches Twitch EventSub configuration
-- For ngrok: ensure you're using the HTTPS URL, not HTTP
+**Twitch webhook verification failing:**
+- Ensure `WEBHOOK_URL` is publicly accessible via HTTPS
+- Verify SSL certificate is valid
+- Check `WEBHOOK_SECRET` matches configuration
 
-**Twitch API errors:**
-- Check `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET`
-- Ensure Twitch application is not suspended
-- Check rate limits in logs
+**Kick webhook signature verification failing:**
+- Ensure webhooks are enabled in Kick developer portal
+- Verify webhook URL is set to `https://your-domain.com/kick-webhook`
+- Run `/kickauth` to authorize the bot with a user token
+
+**Kick notifications missing data (no thumbnail, category, followers):**
+- The bot fetches full livestream data from the API when a webhook fires
+- If the unofficial API returns 403, follower count may show as 0
+- Stream thumbnail requires the official API to return livestream data
 
 **Clip notifications not working:**
-- Verify clip polling service is running (check logs for "Polling for new clips...")
-- Ensure streamers are followed with `/clips follow`
-- Check database permissions for clip-related tables
+- Verify clip polling service is running (check logs)
+- Ensure streamers are followed with `/clips follow` or `/kickclips follow`
+- Kick clips require the unofficial API to be accessible (may return 403 from some server IPs)
 
 **Template variables not working:**
-- Use exact variable names: `{streamer}`, `{creator}`, `{title}`, `{url}`
-- For line-based editing, use `/cliptemplate setline` instead of `\n` characters
-- Preview templates with `/template preview` or `/cliptemplate preview`
+- Use exact variable names as shown in the Template Variables section
+- For clip templates, use `/cliptemplate setline` for line-by-line editing
+- Preview templates with `/template view` or `/cliptemplate preview`
 
 ### Logs
 - **Development**: Logs to console
 - **Production**: Logs to `logs/` directory
 - **Docker**: Use `docker-compose logs -f` to view logs
 
-## 🔒 Security
+## Security
 
 - Store credentials in `.env` file (never commit to git)
 - Use strong `WEBHOOK_SECRET` for EventSub verification
+- Kick webhooks use public key signature verification
+- All command responses are ephemeral (only visible to the invoker)
 - Run with minimal required permissions
 - Regularly rotate API keys and tokens
-- Use HTTPS for webhook endpoint in production
 
-## 📈 Monitoring & Features
-
-The bot includes comprehensive monitoring and advanced features:
-
-### Monitoring
-- **Health Check Endpoint**: `GET /health` for uptime monitoring
-- **Webhook Verification**: Automatic signature validation for security
-- **Database Integrity**: Automatic cleanup of orphaned subscriptions
-- **Error Handling**: Comprehensive error logging and recovery
-- **Migration System**: Automatic database schema updates on startup
-
-### Advanced Features
-- **Dual Command Deployment**: Both global and guild commands for immediate availability
-- **Template System**: Fully customizable notification templates with variable substitution
-- **Line-by-Line Editing**: Advanced clip template editing with `/cliptemplate setline`
-- **Automatic Cleanup**: Removes Discord messages when Twitch clips are deleted
-- **Permission Security**: All commands require ManageChannels permission
-- **Polling Efficiency**: Smart clip detection with cursor-based pagination
-- **Anti-Spam Protection**: Configurable cooldowns prevent notification spam
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - [Discord.js](https://discord.js.org/) - Discord API library
 - [Twitch API](https://dev.twitch.tv/docs/api/) - Twitch integration
+- [Kick API](https://kick.com/settings/developer) - Kick integration
 - [Express.js](https://expressjs.com/) - Webhook server
 - [SQLite](https://www.sqlite.org/) - Database engine
