@@ -14,7 +14,7 @@ class WebhookServer {
         this.port = process.env.WEBHOOK_PORT || 3000;
         this.secret = process.env.WEBHOOK_SECRET;
 
-        this.notificationHandler = new NotificationHandler(models, twitchAPI, discordBot);
+        this.notificationHandler = new NotificationHandler(models, twitchAPI, discordBot, kickAPI);
 
         this.setupMiddleware();
         this.setupRoutes();
@@ -222,18 +222,37 @@ class WebhookServer {
                         logger.info(`Kick: ${slug} went live (via webhook)`);
                         // Sync polling state so polling doesn't re-fire this notification
                         await this.models.setKickStreamState(slug, true);
-                        // Build a minimal livestream object from webhook payload
-                        const livestream = {
-                            session_title: body.title || 'Live Stream',
-                            is_live: true,
-                            viewer_count: 0,
-                            slug,
-                            user: {
-                                username: body.broadcaster?.username || slug,
-                                profile_pic: body.broadcaster?.profile_picture || null,
-                            },
-                            categories: [],
-                        };
+
+                        // Wait a few seconds for stream data to be fully available
+                        await new Promise(resolve => setTimeout(resolve, 5000));
+
+                        // Fetch full livestream data from API for rich notification
+                        let livestream = null;
+                        if (this.kickAPI) {
+                            // Get broadcaster ID from DB or webhook payload
+                            const follow = await this.models.db.get(
+                                'SELECT broadcaster_user_id FROM kick_channel_follows WHERE streamer_slug = ? AND broadcaster_user_id IS NOT NULL LIMIT 1',
+                                [slug]
+                            );
+                            const broadcasterId = follow?.broadcaster_user_id || body.broadcaster?.user_id;
+                            livestream = await this.kickAPI.getLivestream(slug, broadcasterId);
+                        }
+
+                        // Fall back to minimal webhook data if API fetch fails
+                        if (!livestream) {
+                            livestream = {
+                                session_title: body.title || 'Live Stream',
+                                is_live: true,
+                                viewer_count: 0,
+                                slug,
+                                user: {
+                                    username: body.broadcaster?.username || slug,
+                                    profile_pic: body.broadcaster?.profile_picture || null,
+                                },
+                                categories: [],
+                            };
+                        }
+
                         await this.notificationHandler.handleKickStreamOnline(slug, livestream);
                     } else {
                         logger.info(`Kick: ${slug} went offline (via webhook)`);

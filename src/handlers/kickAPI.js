@@ -358,8 +358,9 @@ class KickAPI {
             user: {
                 id: data.broadcaster_user_id,
                 username: data.broadcaster_user_name ?? data.slug ?? slug,
+                profile_pic: data.user?.profile_pic || null,
             },
-            livestream: null,
+            livestream: data.livestream || null,
         };
     }
 
@@ -373,6 +374,17 @@ class KickAPI {
             timeout: 10000,
         });
         return response.data;
+    }
+
+    // Returns follower count for a channel via the unofficial API.
+    // The official API does not expose follower count.
+    async getFollowerCount(slug) {
+        try {
+            const channel = await this.getChannelBySlugUnofficial(slug);
+            return channel?.followers_count ?? channel?.followersCount ?? null;
+        } catch {
+            return null;
+        }
     }
 
     // =========================================================================
@@ -432,9 +444,10 @@ class KickAPI {
             viewer_count: data.viewers ?? 0,
             slug: data.slug || slug,
             categories: data.categories || [],
+            thumbnail: data.thumbnail || null,
             user: {
                 username: slug,
-                profile_pic: data.thumbnail || null,
+                profile_pic: null,
             },
             channel_id: data.channel_id,
             broadcaster_user_id: data.broadcaster_user_id,

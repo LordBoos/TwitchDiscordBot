@@ -2,10 +2,11 @@ const { EmbedBuilder } = require('discord.js');
 const logger = require('../utils/logger');
 
 class NotificationHandler {
-    constructor(models, twitchAPI, discordBot) {
+    constructor(models, twitchAPI, discordBot, kickAPI = null) {
         this.models = models;
         this.twitchAPI = twitchAPI;
         this.discordBot = discordBot;
+        this.kickAPI = kickAPI;
         this.cooldownSeconds = parseInt(process.env.NOTIFICATION_COOLDOWN_SECONDS) || 30;
     }
 
@@ -395,13 +396,19 @@ class NotificationHandler {
                 const streamTitle = livestream.session_title || 'Live Stream';
                 const category = livestream.categories?.[0]?.name || 'No category';
 
+                // Fetch follower count for message text
+                let followerCount = null;
+                if (this.kickAPI) {
+                    followerCount = await this.kickAPI.getFollowerCount(slug);
+                }
+
                 const variables = {
                     '{streamer_name}': streamerName,
                     '{streamer_login}': slug,
                     '{stream_title}': streamTitle,
                     '{game_name}': category,
                     '{viewer_count}': livestream.viewer_count ? livestream.viewer_count.toLocaleString() : '0',
-                    '{follower_count}': '0'
+                    '{follower_count}': followerCount ? followerCount.toLocaleString() : '0'
                 };
 
                 let messageText = template.message_text;
@@ -427,6 +434,13 @@ class NotificationHandler {
         const category     = livestream.categories?.[0]?.name || null;
         const viewers      = livestream.viewer_count ?? null;
         const profilePic   = livestream.user?.profile_pic || null;
+        const thumbnail    = livestream.thumbnail || null;
+
+        // Fetch follower count from Kick API (unofficial, may fail)
+        let followerCount = null;
+        if (this.kickAPI) {
+            followerCount = await this.kickAPI.getFollowerCount(slug);
+        }
 
         // Get custom template for this guild (same template as Twitch)
         const template = await this.models.getNotificationTemplate(guildId);
@@ -438,7 +452,7 @@ class NotificationHandler {
             '{stream_title}': streamTitle,
             '{game_name}': category || 'No category',
             '{viewer_count}': viewers !== null ? viewers.toLocaleString() : '0',
-            '{follower_count}': '0'
+            '{follower_count}': followerCount ? followerCount.toLocaleString() : '0'
         };
 
         // Apply template or use Kick-specific defaults
@@ -461,26 +475,54 @@ class NotificationHandler {
             embed.setDescription(`**${description}**`);
         }
 
-        if (profilePic) embed.setThumbnail(profilePic);
+        // Add stream preview as main image (same as Twitch)
+        if (thumbnail) {
+            // Add cache-busting parameter for Discord to show fresh thumbnails
+            const randomNum = Math.floor(Math.random() * (100000 - 100 + 1)) + 100;
+            const timestamp = Math.floor(Date.now() / 1000);
+            const urlWithParam = `${thumbnail}?${randomNum}=${timestamp}`;
+            embed.setImage(urlWithParam);
+            logger.info(`Kick: added stream preview: ${urlWithParam}`);
+        }
+
+        // Add profile picture as thumbnail (small image on right side)
+        if (profilePic) {
+            embed.setThumbnail(profilePic);
+        } else if (this.kickAPI) {
+            // Try to fetch profile pic from channel data
+            try {
+                const channel = await this.kickAPI.getChannelBySlug(slug);
+                const pic = channel?.user?.profile_pic || channel?.user?.profile_image;
+                if (pic) embed.setThumbnail(pic);
+            } catch {
+                // Non-critical, skip
+            }
+        }
 
         const fields = [];
 
         // Game/Category field (inline) — respects template show_game setting
         if (template?.show_game !== false && category) {
             fields.push({
-                name: template?.game_field_name || '🎮 Game',
+                name: template?.game_field_name || '🎮 Hraje',
                 value: category,
                 inline: true
             });
         }
 
-        // Followers field — Kick doesn't provide follower count, so skip unless template forces it
-        // (kept for consistency but value will be '0')
+        // Followers field (inline)
+        if (template?.show_followers !== false && followerCount !== null) {
+            fields.push({
+                name: template?.followers_field_name || '❤️ Sledujících',
+                value: followerCount.toLocaleString(),
+                inline: true
+            });
+        }
 
         // Watch field (inline)
         fields.push({
-            name: template?.watch_field_name || '📺 Watch',
-            value: `[${template?.open_stream_text || 'Open Stream'}](${streamUrl})`,
+            name: template?.watch_field_name || '📺 Sleduj',
+            value: `[${template?.open_stream_text || 'Otevřít Stream'}](${streamUrl})`,
             inline: true,
         });
 
