@@ -19,6 +19,11 @@ class ClipPollingService {
         logger.info(`Starting clip polling service (interval: ${this.pollIntervalMinutes} minutes)`);
         this.isPolling = true;
 
+        // Repair any clip messages that were edited with the wrong template
+        this.repairClipMessages().catch(err =>
+            logger.error('Error during clip message repair:', err)
+        );
+
         // Run initial poll after 30 seconds
         setTimeout(() => {
             this.pollForClips();
@@ -279,6 +284,82 @@ class ClipPollingService {
 
         } catch (error) {
             logger.error(`Error checking clip title changes for ${streamerName}:`, error);
+        }
+    }
+
+    async repairClipMessages() {
+        try {
+            // Get all tracked clip messages from the last 7 days
+            const allClipMessages = await this.models.db.all(`
+                SELECT DISTINCT clip_id, channel_id, message_id, streamer_name, clip_title
+                FROM clip_discord_messages
+                WHERE created_at > datetime('now', '-7 days')
+            `);
+
+            if (allClipMessages.length === 0) return;
+
+            logger.info(`Repair: checking ${allClipMessages.length} recent clip messages for template consistency`);
+            let repaired = 0;
+
+            // Group by clip_id to avoid fetching the same clip multiple times
+            const clipGroups = {};
+            for (const msg of allClipMessages) {
+                if (!clipGroups[msg.clip_id]) clipGroups[msg.clip_id] = [];
+                clipGroups[msg.clip_id].push(msg);
+            }
+
+            for (const [clipId, messages] of Object.entries(clipGroups)) {
+                try {
+                    const clipData = await this.twitchAPI.getClipById(clipId);
+                    if (!clipData) continue;
+
+                    for (const messageRecord of messages) {
+                        try {
+                            const channel = await this.notificationHandler.discordBot.client.channels.fetch(messageRecord.channel_id);
+                            if (!channel) continue;
+
+                            const guildId = channel.guild?.id;
+                            const template = guildId ? await this.models.getClipNotificationTemplate(guildId) : null;
+                            const messageTemplate = template?.message_template || '{creator} just created a new clip on {streamer} channel\n{title}\n{url}';
+
+                            const variables = {
+                                '{creator}': clipData.creator_name || 'Unknown',
+                                '{streamer}': clipData.broadcaster_name || 'Unknown',
+                                '{title}': clipData.title || messageRecord.clip_title || 'Untitled Clip',
+                                '{url}': clipData.url || ''
+                            };
+
+                            let expectedContent = messageTemplate;
+                            Object.entries(variables).forEach(([placeholder, value]) => {
+                                expectedContent = expectedContent.replace(new RegExp(placeholder.replace(/[{}]/g, '\\$&'), 'g'), value);
+                            });
+
+                            // Fetch the actual Discord message and compare
+                            const discordMessage = await channel.messages.fetch(messageRecord.message_id);
+                            if (discordMessage.content !== expectedContent) {
+                                await discordMessage.edit(expectedContent);
+                                repaired++;
+                                logger.info(`Repair: fixed clip message ${messageRecord.message_id} for clip ${clipId}`);
+                            }
+                        } catch (msgError) {
+                            // Message may have been deleted — skip silently
+                            if (msgError.code !== 10008) {
+                                logger.debug(`Repair: could not check message ${messageRecord.message_id}: ${msgError.message}`);
+                            }
+                        }
+                    }
+                } catch (clipError) {
+                    logger.debug(`Repair: could not fetch clip ${clipId}: ${clipError.message}`);
+                }
+            }
+
+            if (repaired > 0) {
+                logger.info(`Repair: fixed ${repaired} clip message(s) with correct template`);
+            } else {
+                logger.info('Repair: all recent clip messages have correct formatting');
+            }
+        } catch (error) {
+            logger.error('Error during clip message repair:', error);
         }
     }
 
