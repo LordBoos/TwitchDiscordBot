@@ -396,7 +396,7 @@ class NotificationHandler {
                 const streamTitle = livestream.session_title || 'Live Stream';
                 const category = livestream.categories?.[0]?.name || 'No category';
 
-                const followerCount = livestream.follower_count ?? null;
+                const subscriberCount = livestream.subscriber_count ?? null;
 
                 const variables = {
                     '{streamer_name}': streamerName,
@@ -404,7 +404,7 @@ class NotificationHandler {
                     '{stream_title}': streamTitle,
                     '{game_name}': category,
                     '{viewer_count}': livestream.viewer_count ? livestream.viewer_count.toLocaleString() : '0',
-                    '{follower_count}': followerCount ? followerCount.toLocaleString() : '0'
+                    '{follower_count}': subscriberCount ? subscriberCount.toLocaleString() : '0'
                 };
 
                 let messageText = template.message_text;
@@ -432,12 +432,8 @@ class NotificationHandler {
         const profilePic   = livestream.user?.profile_pic || null;
         const thumbnail    = livestream.thumbnail || null;
 
-        // Use follower count from the livestream object (fetched from /channels API),
-        // fall back to unofficial API if not available
-        let followerCount = livestream.follower_count ?? null;
-        if (followerCount === null && this.kickAPI) {
-            followerCount = await this.kickAPI.getFollowerCount(slug);
-        }
+        // Use subscriber count from the /channels API (Kick has subscribers, not followers)
+        const subscriberCount = livestream.subscriber_count ?? null;
 
         // Get custom template for this guild (same template as Twitch)
         const template = await this.models.getNotificationTemplate(guildId);
@@ -449,7 +445,7 @@ class NotificationHandler {
             '{stream_title}': streamTitle,
             '{game_name}': category || 'No category',
             '{viewer_count}': viewers !== null ? viewers.toLocaleString() : '0',
-            '{follower_count}': followerCount ? followerCount.toLocaleString() : '0'
+            '{follower_count}': subscriberCount ? subscriberCount.toLocaleString() : '0'
         };
 
         // Apply template or use Kick-specific defaults
@@ -507,11 +503,11 @@ class NotificationHandler {
             });
         }
 
-        // Followers field (inline)
-        if (template?.show_followers !== false && followerCount !== null) {
+        // Subscribers field (inline) — Kick uses subscribers instead of followers
+        if (template?.show_followers !== false && subscriberCount !== null) {
             fields.push({
                 name: template?.followers_field_name || '❤️ Sledujících',
-                value: followerCount.toLocaleString(),
+                value: subscriberCount.toLocaleString(),
                 inline: true
             });
         }

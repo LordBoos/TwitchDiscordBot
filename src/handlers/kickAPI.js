@@ -376,17 +376,6 @@ class KickAPI {
         return response.data;
     }
 
-    // Returns follower count for a channel via the unofficial API.
-    // The official API does not expose follower count.
-    async getFollowerCount(slug) {
-        try {
-            const channel = await this.getChannelBySlugUnofficial(slug);
-            return channel?.followers_count ?? channel?.followersCount ?? null;
-        } catch {
-            return null;
-        }
-    }
-
     // =========================================================================
     // Livestream status (use app token)
     // =========================================================================
@@ -471,7 +460,7 @@ class KickAPI {
             },
             channel_id: streamData.channel_id,
             broadcaster_user_id: streamData.broadcaster_user_id,
-            follower_count: channelData?.follower_count ?? null,
+            subscriber_count: channelData?.active_subscribers_count ?? null,
         };
     }
 
