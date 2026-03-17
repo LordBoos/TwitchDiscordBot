@@ -396,11 +396,7 @@ class NotificationHandler {
                 const streamTitle = livestream.session_title || 'Live Stream';
                 const category = livestream.categories?.[0]?.name || 'No category';
 
-                // Fetch follower count for message text
-                let followerCount = null;
-                if (this.kickAPI) {
-                    followerCount = await this.kickAPI.getFollowerCount(slug);
-                }
+                const followerCount = livestream.follower_count ?? null;
 
                 const variables = {
                     '{streamer_name}': streamerName,
@@ -436,9 +432,10 @@ class NotificationHandler {
         const profilePic   = livestream.user?.profile_pic || null;
         const thumbnail    = livestream.thumbnail || null;
 
-        // Fetch follower count from Kick API (unofficial, may fail)
-        let followerCount = null;
-        if (this.kickAPI) {
+        // Use follower count from the livestream object (fetched from /channels API),
+        // fall back to unofficial API if not available
+        let followerCount = livestream.follower_count ?? null;
+        if (followerCount === null && this.kickAPI) {
             followerCount = await this.kickAPI.getFollowerCount(slug);
         }
 

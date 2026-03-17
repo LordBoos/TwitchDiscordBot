@@ -425,32 +425,53 @@ class KickAPI {
         }
     }
 
-    // Official API: check if a broadcaster is currently live
+    // Official API: check if a broadcaster is currently live.
+    // Fetches both /livestreams (for stream data) and /channels (for profile pic,
+    // follower count) in parallel, then merges the results.
     async getLivestreamOfficial(broadcasterUserId, slug) {
         await this.ensureToken();
-        const response = await axios.get(`${this.publicApiBase}/livestreams`, {
-            params: { broadcaster_user_id: Number(broadcasterUserId) },
-            headers: {
-                Authorization: `Bearer ${this.accessToken}`,
-                Accept: 'application/json',
-            },
-            timeout: 10000,
-        });
-        const data = response.data?.data?.[0];
-        if (!data || !data.is_live) return null;
+        const headers = {
+            Authorization: `Bearer ${this.accessToken}`,
+            Accept: 'application/json',
+        };
+
+        // Fetch livestream and channel data in parallel
+        const [livestreamResp, channelResp] = await Promise.allSettled([
+            axios.get(`${this.publicApiBase}/livestreams`, {
+                params: { broadcaster_user_id: Number(broadcasterUserId) },
+                headers,
+                timeout: 10000,
+            }),
+            axios.get(`${this.publicApiBase}/channels`, {
+                params: { slug },
+                headers,
+                timeout: 10000,
+            }),
+        ]);
+
+        const streamData = livestreamResp.status === 'fulfilled'
+            ? livestreamResp.value.data?.data?.[0]
+            : null;
+        const channelData = channelResp.status === 'fulfilled'
+            ? channelResp.value.data?.data?.[0]
+            : null;
+
+        if (!streamData || !streamData.is_live) return null;
+
         return {
-            session_title: data.session_title,
+            session_title: streamData.session_title,
             is_live: true,
-            viewer_count: data.viewers ?? 0,
-            slug: data.slug || slug,
-            categories: data.categories || [],
-            thumbnail: data.thumbnail || null,
+            viewer_count: streamData.viewers ?? 0,
+            slug: streamData.slug || slug,
+            categories: streamData.categories || [],
+            thumbnail: streamData.thumbnail || null,
             user: {
-                username: slug,
-                profile_pic: null,
+                username: channelData?.user?.username || slug,
+                profile_pic: channelData?.user?.profile_pic || null,
             },
-            channel_id: data.channel_id,
-            broadcaster_user_id: data.broadcaster_user_id,
+            channel_id: streamData.channel_id,
+            broadcaster_user_id: streamData.broadcaster_user_id,
+            follower_count: channelData?.follower_count ?? null,
         };
     }
 
