@@ -599,40 +599,22 @@ class KickAPI {
     // Category cache (for Twitch→Kick category mapping)
     // =========================================================================
 
-    async getCategories() {
-        // Return cached categories if still fresh (1 hour TTL)
-        if (this.categoryCache && Date.now() < this.categoryCacheExpiry) {
-            return this.categoryCache;
-        }
-
-        await this.ensureToken();
-
-        // The /categories endpoint requires a search query parameter
-        // We can't fetch all categories at once, so we'll search on demand
-        // For now, return empty and let findCategoryByName handle the search
-        logger.debug('Kick: category cache empty, will search on demand');
-        return [];
-    }
-
     /**
      * Search for Kick categories by name using the v2 API.
-     * GET /public/v2/categories?name[]=<name>
-     * Returns matching categories array.
+     * Returns up to 25 most similar categories.
      */
     async searchCategories(name) {
         await this.ensureToken();
         try {
             const response = await axios.get('https://api.kick.com/public/v2/categories', {
-                params: { 'name[]': name },
+                params: { name },
                 headers: {
                     Authorization: `Bearer ${this.accessToken}`,
                     Accept: 'application/json',
                 },
                 timeout: 15000,
             });
-            const results = response.data?.data || [];
-            logger.info(`Kick: category search for "${name}" returned ${results.length} result(s)${results.length > 0 ? ': ' + results.map(c => `${c.name} (id:${c.id})`).join(', ') : ''}`);
-            return results;
+            return response.data?.data || [];
         } catch (error) {
             const detail = error.response
                 ? `HTTP ${error.response.status}: ${JSON.stringify(error.response.data)}`
@@ -643,33 +625,55 @@ class KickAPI {
     }
 
     /**
-     * Find a Kick category by name (case-insensitive exact match).
-     * Searches the API directly, then checks cache.
+     * Find the best matching Kick category for a given name.
+     * Searches the API (returns ~25 most similar), then picks the best match:
+     *   1. Exact match (case-insensitive)
+     *   2. Kick name starts with search term ("Overwatch" → "Overwatch 2")
+     *   3. Search term starts with Kick name ("Slay the Spire II" → "Slay the Spire")
+     *   4. Substring match
+     *   5. First result (API already sorts by relevance)
      * Returns the category object { id, name, slug } or null.
      */
     async findCategoryByName(name) {
         if (!name) return null;
+
+        const results = await this.searchCategories(name);
+        if (!results.length) return null;
+
         const lowerName = name.toLowerCase();
 
-        // Check cache first
-        if (this.categoryCache) {
-            const cached = this.categoryCache.find(c => c.name.toLowerCase() === lowerName);
-            if (cached) return cached;
+        // 1. Exact match
+        const exact = results.find(c => c.name.toLowerCase() === lowerName);
+        if (exact) return exact;
+
+        // 2. Kick name starts with search term ("Overwatch" → "Overwatch 2")
+        const startsWith = results.find(c => c.name.toLowerCase().startsWith(lowerName));
+        if (startsWith) {
+            logger.info(`Kick: fuzzy category match: "${name}" → "${startsWith.name}" (starts with)`);
+            return startsWith;
         }
 
-        // Search the API
-        const results = await this.searchCategories(name);
-        const match = results.find(c => c.name.toLowerCase() === lowerName);
-        if (match) {
-            // Add to cache
-            if (!this.categoryCache) this.categoryCache = [];
-            if (!this.categoryCache.find(c => c.id === match.id)) {
-                this.categoryCache.push(match);
-            }
-            return match;
+        // 3. Search term starts with Kick name ("Slay the Spire II" → "Slay the Spire")
+        const reverseStartsWith = results
+            .filter(c => lowerName.startsWith(c.name.toLowerCase()))
+            .sort((a, b) => b.name.length - a.name.length); // longest match first
+        if (reverseStartsWith.length > 0) {
+            logger.info(`Kick: fuzzy category match: "${name}" → "${reverseStartsWith[0].name}" (reverse starts with)`);
+            return reverseStartsWith[0];
         }
 
-        return null;
+        // 4. Substring match
+        const substring = results.find(c =>
+            c.name.toLowerCase().includes(lowerName) || lowerName.includes(c.name.toLowerCase())
+        );
+        if (substring) {
+            logger.info(`Kick: fuzzy category match: "${name}" → "${substring.name}" (substring)`);
+            return substring;
+        }
+
+        // 5. API returns results sorted by relevance — use the first one
+        logger.info(`Kick: no close match for "${name}", using best API result: "${results[0].name}" (id:${results[0].id})`);
+        return results[0];
     }
 
     // =========================================================================

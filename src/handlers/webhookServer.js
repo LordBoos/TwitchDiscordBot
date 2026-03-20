@@ -228,13 +228,9 @@ class WebhookServer {
                         updates.category_id = kickCategory.id;
                         logger.info(`Sync ${twitchSlug}→${sync.kick_slug}: mapped category "${newCategoryName}" → Kick id ${kickCategory.id} ("${kickCategory.name}")`);
                     } else {
-                        kickCategory = await this.kickAPI.findCategoryByName('Games + Demos');
-                        if (kickCategory) {
-                            updates.category_id = kickCategory.id;
-                            logger.info(`Sync ${twitchSlug}→${sync.kick_slug}: category "${newCategoryName}" not found on Kick, using fallback "Games + Demos" (id ${kickCategory.id})`);
-                        } else {
-                            logger.warn(`Sync ${twitchSlug}→${sync.kick_slug}: category "${newCategoryName}" not found on Kick and fallback failed`);
-                        }
+                        // Fall back to "Games + Demos" (id 242)
+                        updates.category_id = 242;
+                        logger.info(`Sync ${twitchSlug}→${sync.kick_slug}: category "${newCategoryName}" not found on Kick, using fallback "Games + Demos" (id 242)`);
                     }
                 } catch (catErr) {
                     logger.warn(`Sync ${twitchSlug}→${sync.kick_slug}: category lookup error — ${catErr.message}`);
