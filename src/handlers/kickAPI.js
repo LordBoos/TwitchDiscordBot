@@ -357,10 +357,12 @@ class KickAPI {
             slug: data.slug ?? slug,
             user: {
                 id: data.broadcaster_user_id,
-                username: data.broadcaster_user_name ?? data.slug ?? slug,
-                profile_pic: data.user?.profile_pic || null,
+                username: data.slug ?? slug,
             },
-            livestream: data.livestream || null,
+            active_subscribers_count: data.active_subscribers_count ?? null,
+            stream: data.stream || null,
+            stream_title: data.stream_title || null,
+            category: data.category || null,
         };
     }
 
@@ -394,17 +396,27 @@ class KickAPI {
             }
         }
 
-        // Fallback to unofficial API
+        // Fallback to unofficial API — normalize to same shape as official
         try {
             const channel = await this.getChannelBySlugUnofficial(slug);
             if (!channel || !channel.livestream || !channel.livestream.is_live) {
                 return null;
             }
+            const ls = channel.livestream;
+            const cat = ls.categories?.[0] || channel.recent_categories?.[0] || null;
             return {
-                ...channel.livestream,
+                session_title: ls.session_title || 'Live Stream',
+                is_live: true,
+                viewer_count: ls.viewers ?? ls.viewer_count ?? 0,
                 slug: channel.slug,
-                user: channel.user,
+                categories: cat ? [cat] : [],
+                thumbnail: ls.thumbnail || null,
+                user: {
+                    username: channel.user?.username || channel.slug,
+                    profile_pic: channel.user?.profile_pic || null,
+                },
                 channel_id: channel.id,
+                subscriber_count: null, // unofficial API doesn't have this
             };
         } catch (error) {
             const status = error.response?.status;
@@ -452,27 +464,34 @@ class KickAPI {
             ? channelResp.value.data?.data?.[0]
             : null;
 
-        logger.debug(`Kick: livestream API response for ${slug}: streamData=${streamData ? 'present' : 'null'}, is_live=${streamData?.is_live}, categories=${JSON.stringify(streamData?.categories)}, thumbnail=${streamData?.thumbnail ? 'present' : 'null'}`);
-        logger.debug(`Kick: channel API response for ${slug}: channelData=${channelData ? 'present' : 'null'}, subscribers=${channelData?.active_subscribers_count}`);
+        // /livestreams fields: stream_title, viewer_count, thumbnail, category{id,name}, profile_picture, started_at, has_mature_content
+        // /channels fields: stream_title, stream{is_live, viewer_count, thumbnail}, category{id,name}, active_subscribers_count
+        logger.debug(`Kick: livestream API for ${slug}: ${streamData ? `viewer_count=${streamData.viewer_count}, category=${streamData.category?.name}, thumbnail=${streamData.thumbnail ? 'present' : 'null'}` : 'null'}`);
+        logger.debug(`Kick: channel API for ${slug}: ${channelData ? `subscribers=${channelData.active_subscribers_count}, is_live=${channelData.stream?.is_live}` : 'null'}`);
 
-        if (!streamData || !streamData.is_live) {
-            logger.debug(`Kick: /livestreams returned no live stream for ${slug} (broadcaster ${broadcasterUserId})`);
+        // Check live status: /livestreams data presence implies live, or check /channels stream.is_live
+        const isLive = streamData || channelData?.stream?.is_live;
+        if (!isLive) {
+            logger.debug(`Kick: no live stream for ${slug} (broadcaster ${broadcasterUserId})`);
             return null;
         }
 
+        // Merge data from both endpoints — /livestreams is primary, /channels fills gaps
+        const category = streamData?.category || channelData?.category || null;
+
         return {
-            session_title: streamData.session_title,
+            session_title: streamData?.stream_title || channelData?.stream_title || 'Live Stream',
             is_live: true,
-            viewer_count: streamData.viewers ?? 0,
-            slug: streamData.slug || slug,
-            categories: streamData.categories || [],
-            thumbnail: streamData.thumbnail || null,
+            viewer_count: streamData?.viewer_count ?? channelData?.stream?.viewer_count ?? 0,
+            slug: streamData?.slug || slug,
+            categories: category ? [category] : [],
+            thumbnail: streamData?.thumbnail || channelData?.stream?.thumbnail || null,
             user: {
-                username: channelData?.user?.username || slug,
-                profile_pic: channelData?.user?.profile_pic || null,
+                username: channelData?.slug || slug,
+                profile_pic: streamData?.profile_picture || null,
             },
-            channel_id: streamData.channel_id,
-            broadcaster_user_id: streamData.broadcaster_user_id,
+            channel_id: streamData?.channel_id,
+            broadcaster_user_id: streamData?.broadcaster_user_id || channelData?.broadcaster_user_id,
             subscriber_count: channelData?.active_subscribers_count ?? null,
         };
     }

@@ -68,25 +68,24 @@ module.exports = {
             const channelInfo = ch ? [
                 `**slug:** ${ch.slug}`,
                 `**broadcaster_user_id:** ${ch.broadcaster_user_id}`,
-                `**broadcaster_user_name:** ${ch.broadcaster_user_name}`,
-                `**is_banned:** ${ch.is_banned}`,
-                `**subscription_enabled:** ${ch.subscription_enabled}`,
+                `**stream_title:** ${ch.stream_title || 'N/A'}`,
+                `**category:** ${ch.category?.name || 'N/A'} (id:${ch.category?.id || 'N/A'})`,
                 `**active_subscribers_count:** ${ch.active_subscribers_count ?? 'N/A'}`,
-                `**profile_pic:** ${ch.user?.profile_pic ? 'present' : 'null'}`,
-                `**banner_image:** ${ch.banner_image ? 'present' : 'null'}`,
-                `**offline_banner:** ${ch.offline_banner_image ? 'present' : 'null'}`,
-                `**livestream:** ${ch.livestream ? (ch.livestream.is_live ? 'LIVE' : 'offline') : 'null'}`,
+                `**stream.is_live:** ${ch.stream?.is_live ?? 'N/A'}`,
+                `**stream.viewer_count:** ${ch.stream?.viewer_count ?? 'N/A'}`,
+                `**stream.language:** ${ch.stream?.language ?? 'N/A'}`,
+                `**stream.thumbnail:** ${ch.stream?.thumbnail ? 'present' : 'null'}`,
             ].join('\n') : `Error: ${JSON.stringify(channelRaw)}`;
 
             const livestreamInfo = ls ? [
-                `**is_live:** ${ls.is_live}`,
-                `**session_title:** ${ls.session_title}`,
-                `**viewers:** ${ls.viewers}`,
-                `**duration:** ${ls.duration}s`,
+                `**stream_title:** ${ls.stream_title}`,
+                `**viewer_count:** ${ls.viewer_count}`,
                 `**language:** ${ls.language}`,
-                `**is_mature:** ${ls.is_mature}`,
+                `**has_mature_content:** ${ls.has_mature_content}`,
+                `**started_at:** ${ls.started_at}`,
                 `**thumbnail:** ${ls.thumbnail ? 'present' : 'null'}`,
-                `**categories:** ${ls.categories?.map(c => `${c.name} (id:${c.id})`).join(', ') || 'none'}`,
+                `**category:** ${ls.category?.name || 'none'} (id:${ls.category?.id || 'N/A'})`,
+                `**profile_picture:** ${ls.profile_picture ? 'present' : 'null'}`,
                 `**broadcaster_user_id:** ${ls.broadcaster_user_id}`,
                 `**channel_id:** ${ls.channel_id}`,
             ].join('\n') : 'Not currently live (or no data)';
@@ -104,11 +103,11 @@ module.exports = {
                 )
                 .setTimestamp();
 
-            if (ch?.user?.profile_pic) {
-                embed.setThumbnail(ch.user.profile_pic);
+            if (ls?.profile_picture) {
+                embed.setThumbnail(ls.profile_picture);
             }
-            if (ls?.thumbnail) {
-                embed.setImage(ls.thumbnail);
+            if (ls?.thumbnail || ch?.stream?.thumbnail) {
+                embed.setImage(ls?.thumbnail || ch.stream.thumbnail);
             }
 
             // Also show user token status
