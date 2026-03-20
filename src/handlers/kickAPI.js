@@ -438,6 +438,13 @@ class KickAPI {
             }),
         ]);
 
+        if (livestreamResp.status === 'rejected') {
+            logger.warn(`Kick: /livestreams API failed for ${slug}: ${livestreamResp.reason?.message}`);
+        }
+        if (channelResp.status === 'rejected') {
+            logger.warn(`Kick: /channels API failed for ${slug}: ${channelResp.reason?.message}`);
+        }
+
         const streamData = livestreamResp.status === 'fulfilled'
             ? livestreamResp.value.data?.data?.[0]
             : null;
@@ -445,7 +452,13 @@ class KickAPI {
             ? channelResp.value.data?.data?.[0]
             : null;
 
-        if (!streamData || !streamData.is_live) return null;
+        logger.debug(`Kick: livestream API response for ${slug}: streamData=${streamData ? 'present' : 'null'}, is_live=${streamData?.is_live}, categories=${JSON.stringify(streamData?.categories)}, thumbnail=${streamData?.thumbnail ? 'present' : 'null'}`);
+        logger.debug(`Kick: channel API response for ${slug}: channelData=${channelData ? 'present' : 'null'}, subscribers=${channelData?.active_subscribers_count}`);
+
+        if (!streamData || !streamData.is_live) {
+            logger.debug(`Kick: /livestreams returned no live stream for ${slug} (broadcaster ${broadcasterUserId})`);
+            return null;
+        }
 
         return {
             session_title: streamData.session_title,

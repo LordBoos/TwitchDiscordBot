@@ -223,23 +223,32 @@ class WebhookServer {
                         // Sync polling state so polling doesn't re-fire this notification
                         await this.models.setKickStreamState(slug, true);
 
-                        // Wait a few seconds for stream data to be fully available
-                        await new Promise(resolve => setTimeout(resolve, 5000));
-
-                        // Fetch full livestream data from API for rich notification
+                        // Fetch full livestream data from API for rich notification.
+                        // The API may not have the stream registered yet when the webhook fires,
+                        // so we retry a few times with increasing delays.
                         let livestream = null;
                         if (this.kickAPI) {
-                            // Get broadcaster ID from DB or webhook payload
                             const follow = await this.models.db.get(
                                 'SELECT broadcaster_user_id FROM kick_channel_follows WHERE streamer_slug = ? AND broadcaster_user_id IS NOT NULL LIMIT 1',
                                 [slug]
                             );
                             const broadcasterId = follow?.broadcaster_user_id || body.broadcaster?.user_id;
-                            livestream = await this.kickAPI.getLivestream(slug, broadcasterId);
+
+                            const delays = [5000, 5000, 10000]; // retry after 5s, 10s, 20s total
+                            for (const delay of delays) {
+                                await new Promise(resolve => setTimeout(resolve, delay));
+                                livestream = await this.kickAPI.getLivestream(slug, broadcasterId);
+                                if (livestream) {
+                                    logger.info(`Kick: enriched livestream data for ${slug} (categories: ${livestream.categories?.map(c => c.name).join(', ') || 'none'}, subscribers: ${livestream.subscriber_count ?? 'unknown'})`);
+                                    break;
+                                }
+                                logger.info(`Kick: stream data not available yet for ${slug}, retrying...`);
+                            }
                         }
 
                         // Fall back to minimal webhook data if API fetch fails
                         if (!livestream) {
+                            logger.warn(`Kick: API enrichment failed for ${slug}, using minimal webhook data`);
                             livestream = {
                                 session_title: body.title || 'Live Stream',
                                 is_live: true,
