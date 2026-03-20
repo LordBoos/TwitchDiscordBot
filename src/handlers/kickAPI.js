@@ -606,29 +606,89 @@ class KickAPI {
         }
 
         await this.ensureToken();
-        const response = await axios.get(`${this.publicApiBase}/categories`, {
-            headers: {
-                Authorization: `Bearer ${this.accessToken}`,
-                Accept: 'application/json',
-            },
-            timeout: 15000,
-        });
 
-        this.categoryCache = response.data?.data || [];
-        this.categoryCacheExpiry = Date.now() + 60 * 60 * 1000; // 1 hour
-        logger.info(`Kick: cached ${this.categoryCache.length} categories`);
-        return this.categoryCache;
+        // The /categories endpoint requires a search query parameter
+        // We can't fetch all categories at once, so we'll search on demand
+        // For now, return empty and let findCategoryByName handle the search
+        logger.debug('Kick: category cache empty, will search on demand');
+        return [];
+    }
+
+    /**
+     * Search for Kick categories by name using the API.
+     * Returns matching categories array.
+     */
+    async searchCategories(query) {
+        await this.ensureToken();
+        try {
+            const response = await axios.get(`${this.publicApiBase}/categories`, {
+                params: { q: query },
+                headers: {
+                    Authorization: `Bearer ${this.accessToken}`,
+                    Accept: 'application/json',
+                },
+                timeout: 15000,
+            });
+            logger.debug(`Kick: category search for "${query}" returned ${response.data?.data?.length || 0} results`);
+            return response.data?.data || [];
+        } catch (error) {
+            const detail = error.response
+                ? `HTTP ${error.response.status}: ${JSON.stringify(error.response.data)}`
+                : error.message;
+            logger.warn(`Kick: category search failed for "${query}": ${detail}`);
+
+            // Try without query param as fallback
+            try {
+                const response = await axios.get(`${this.publicApiBase}/categories`, {
+                    headers: {
+                        Authorization: `Bearer ${this.accessToken}`,
+                        Accept: 'application/json',
+                    },
+                    timeout: 15000,
+                });
+                const all = response.data?.data || [];
+                logger.info(`Kick: fetched all ${all.length} categories as fallback`);
+                this.categoryCache = all;
+                this.categoryCacheExpiry = Date.now() + 60 * 60 * 1000;
+                return all;
+            } catch (fallbackError) {
+                const fbDetail = fallbackError.response
+                    ? `HTTP ${fallbackError.response.status}: ${JSON.stringify(fallbackError.response.data)}`
+                    : fallbackError.message;
+                logger.warn(`Kick: category fetch all also failed: ${fbDetail}`);
+                return [];
+            }
+        }
     }
 
     /**
      * Find a Kick category by name (case-insensitive exact match).
+     * Searches the API directly, then checks cache.
      * Returns the category object { id, name, slug } or null.
      */
     async findCategoryByName(name) {
         if (!name) return null;
-        const categories = await this.getCategories();
         const lowerName = name.toLowerCase();
-        return categories.find(c => c.name.toLowerCase() === lowerName) || null;
+
+        // Check cache first
+        if (this.categoryCache) {
+            const cached = this.categoryCache.find(c => c.name.toLowerCase() === lowerName);
+            if (cached) return cached;
+        }
+
+        // Search the API
+        const results = await this.searchCategories(name);
+        const match = results.find(c => c.name.toLowerCase() === lowerName);
+        if (match) {
+            // Add to cache
+            if (!this.categoryCache) this.categoryCache = [];
+            if (!this.categoryCache.find(c => c.id === match.id)) {
+                this.categoryCache.push(match);
+            }
+            return match;
+        }
+
+        return null;
     }
 
     // =========================================================================
