@@ -230,13 +230,27 @@ class WebhookServer {
                     continue;
                 }
 
-                const result = await this.kickAPI.updateChannel(token, updates);
+                await this.kickAPI.updateChannel(token, updates);
                 logger.info(`Sync ${twitchSlug}→${sync.kick_slug}: Kick channel updated successfully — ${JSON.stringify(updates)}`);
             } catch (error) {
                 const detail = error.response
                     ? `HTTP ${error.response.status}: ${JSON.stringify(error.response.data)}`
                     : error.message;
                 logger.error(`Sync ${twitchSlug}→${sync.kick_slug}: failed to update Kick channel — ${detail}`);
+
+                // If combined update failed and we had both title + category, retry with title only
+                if (error.response?.status === 400 && updates.title && updates.category_id) {
+                    try {
+                        logger.info(`Sync ${twitchSlug}→${sync.kick_slug}: retrying with title only`);
+                        await this.kickAPI.updateChannel(token, { title: updates.title });
+                        logger.info(`Sync ${twitchSlug}→${sync.kick_slug}: title-only update succeeded`);
+                    } catch (retryError) {
+                        const retryDetail = retryError.response
+                            ? `HTTP ${retryError.response.status}: ${JSON.stringify(retryError.response.data)}`
+                            : retryError.message;
+                        logger.error(`Sync ${twitchSlug}→${sync.kick_slug}: title-only retry also failed — ${retryDetail}`);
+                    }
+                }
             }
         }
     }
@@ -410,6 +424,18 @@ class WebhookServer {
             const result = await this.kickAPI.exchangeSyncCodeForToken(code, state);
 
             logger.info(`Kick sync OAuth callback: token obtained for ${result.twitchSlug}→${result.kickSlug}`);
+
+            // Update the original Discord message to show success
+            if (result.interaction) {
+                try {
+                    await result.interaction.editReply(
+                        `✅ **Sync authorized: ${result.twitchSlug} → ${result.kickSlug}**\n\n` +
+                        'Title and category changes on Twitch will now be synced to Kick automatically.'
+                    );
+                } catch (discordError) {
+                    logger.warn('Could not update Discord message after sync auth:', discordError.message);
+                }
+            }
 
             return res.status(200).send(
                 `<html><body style="font-family: system-ui; max-width: 500px; margin: 80px auto; text-align: center;">` +

@@ -643,10 +643,12 @@ class KickAPI {
      */
     async updateChannel(token, updates) {
         const body = {};
-        if (updates.title !== undefined) body.title = updates.title;
-        if (updates.category_id !== undefined) body.category_id = updates.category_id;
+        if (updates.title !== undefined) body.title = String(updates.title);
+        if (updates.category_id !== undefined) body.category_id = Number(updates.category_id);
 
         if (Object.keys(body).length === 0) return null;
+
+        logger.debug(`Kick PATCH /channels request body: ${JSON.stringify(body)}`);
 
         const response = await axios.patch(`${this.publicApiBase}/channels`, body, {
             headers: {
@@ -657,6 +659,7 @@ class KickAPI {
             timeout: 10000,
         });
 
+        logger.debug(`Kick PATCH /channels response: ${JSON.stringify(response.data)}`);
         return response.data;
     }
 
@@ -668,7 +671,7 @@ class KickAPI {
      * Generate an OAuth authorization URL for a specific Twitch↔Kick sync pair.
      * The streamer authenticates their own Kick account.
      */
-    getSyncAuthorizationUrl(twitchSlug, kickSlug) {
+    getSyncAuthorizationUrl(twitchSlug, kickSlug, interaction = null) {
         if (!this.redirectUri) {
             throw new Error('No redirect URI configured. Set KICK_REDIRECT_URI or WEBHOOK_URL in .env');
         }
@@ -679,6 +682,7 @@ class KickAPI {
             codeVerifier: pkce.codeVerifier,
             twitchSlug,
             kickSlug,
+            interaction, // Discord interaction reference for updating the message
             createdAt: Date.now(),
         });
 
@@ -718,7 +722,7 @@ class KickAPI {
             throw new Error('Sync PKCE state expired. Use /sync again.');
         }
 
-        const { codeVerifier, twitchSlug, kickSlug } = pending;
+        const { codeVerifier, twitchSlug, kickSlug, interaction } = pending;
         this.pendingSyncPKCE.delete(state);
 
         const response = await axios.post(
@@ -741,7 +745,7 @@ class KickAPI {
         await this.models.saveSyncKickToken(twitchSlug, kickSlug, access_token, refresh_token, expiresAt, scope || null);
         logger.info(`Kick sync token obtained for ${twitchSlug}→${kickSlug}`);
 
-        return { twitchSlug, kickSlug, access_token, refresh_token, expires_in, scope };
+        return { twitchSlug, kickSlug, access_token, refresh_token, expires_in, scope, interaction };
     }
 
     /**

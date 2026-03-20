@@ -100,7 +100,8 @@ module.exports = {
         }
 
         // Generate the Kick OAuth authorization URL for the streamer
-        const authUrl = kickAPI.getSyncAuthorizationUrl(twitchSlug, kickSlug);
+        // Pass the interaction so we can update the Discord message after OAuth completes
+        const authUrl = kickAPI.getSyncAuthorizationUrl(twitchSlug, kickSlug, interaction);
 
         const message = [
             `🔗 **Sync setup: ${twitchSlug} → ${kickSlug}**`,
