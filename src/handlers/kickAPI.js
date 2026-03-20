@@ -615,49 +615,30 @@ class KickAPI {
     }
 
     /**
-     * Search for Kick categories by name using the API.
+     * Search for Kick categories by name using the v2 API.
+     * GET /public/v2/categories?name[]=<name>
      * Returns matching categories array.
      */
-    async searchCategories(query) {
+    async searchCategories(name) {
         await this.ensureToken();
         try {
-            const response = await axios.get(`${this.publicApiBase}/categories`, {
-                params: { q: query },
+            const response = await axios.get('https://api.kick.com/public/v2/categories', {
+                params: { 'name[]': name },
                 headers: {
                     Authorization: `Bearer ${this.accessToken}`,
                     Accept: 'application/json',
                 },
                 timeout: 15000,
             });
-            logger.debug(`Kick: category search for "${query}" returned ${response.data?.data?.length || 0} results`);
-            return response.data?.data || [];
+            const results = response.data?.data || [];
+            logger.info(`Kick: category search for "${name}" returned ${results.length} result(s)${results.length > 0 ? ': ' + results.map(c => `${c.name} (id:${c.id})`).join(', ') : ''}`);
+            return results;
         } catch (error) {
             const detail = error.response
                 ? `HTTP ${error.response.status}: ${JSON.stringify(error.response.data)}`
                 : error.message;
-            logger.warn(`Kick: category search failed for "${query}": ${detail}`);
-
-            // Try without query param as fallback
-            try {
-                const response = await axios.get(`${this.publicApiBase}/categories`, {
-                    headers: {
-                        Authorization: `Bearer ${this.accessToken}`,
-                        Accept: 'application/json',
-                    },
-                    timeout: 15000,
-                });
-                const all = response.data?.data || [];
-                logger.info(`Kick: fetched all ${all.length} categories as fallback`);
-                this.categoryCache = all;
-                this.categoryCacheExpiry = Date.now() + 60 * 60 * 1000;
-                return all;
-            } catch (fallbackError) {
-                const fbDetail = fallbackError.response
-                    ? `HTTP ${fallbackError.response.status}: ${JSON.stringify(fallbackError.response.data)}`
-                    : fallbackError.message;
-                logger.warn(`Kick: category fetch all also failed: ${fbDetail}`);
-                return [];
-            }
+            logger.warn(`Kick: category search failed for "${name}": ${detail}`);
+            return [];
         }
     }
 
