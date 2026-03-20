@@ -215,13 +215,20 @@ class WebhookServer {
                 }
 
                 // Map Twitch category name to Kick category ID
+                // Falls back to "Games + Demos" if the Twitch category doesn't exist on Kick
                 if (newCategoryName) {
-                    const kickCategory = await this.kickAPI.findCategoryByName(newCategoryName);
+                    let kickCategory = await this.kickAPI.findCategoryByName(newCategoryName);
                     if (kickCategory) {
                         updates.category_id = kickCategory.id;
                         logger.info(`Sync ${twitchSlug}→${sync.kick_slug}: mapped category "${newCategoryName}" → Kick id ${kickCategory.id} ("${kickCategory.name}")`);
                     } else {
-                        logger.warn(`Sync ${twitchSlug}→${sync.kick_slug}: category "${newCategoryName}" not found on Kick, skipping category update`);
+                        kickCategory = await this.kickAPI.findCategoryByName('Games + Demos');
+                        if (kickCategory) {
+                            updates.category_id = kickCategory.id;
+                            logger.info(`Sync ${twitchSlug}→${sync.kick_slug}: category "${newCategoryName}" not found on Kick, using fallback "Games + Demos" (id ${kickCategory.id})`);
+                        } else {
+                            logger.warn(`Sync ${twitchSlug}→${sync.kick_slug}: category "${newCategoryName}" not found on Kick and fallback failed`);
+                        }
                     }
                 }
 
