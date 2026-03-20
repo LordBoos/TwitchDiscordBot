@@ -648,7 +648,7 @@ class KickAPI {
 
         if (Object.keys(body).length === 0) return null;
 
-        logger.debug(`Kick PATCH /channels request body: ${JSON.stringify(body)}`);
+        logger.info(`Kick PATCH /channels request body: ${JSON.stringify(body)}`);
 
         const response = await axios.patch(`${this.publicApiBase}/channels`, body, {
             headers: {

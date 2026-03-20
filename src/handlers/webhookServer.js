@@ -193,30 +193,36 @@ class WebhookServer {
         logger.info(`channel.update for ${twitchSlug}: title="${newTitle}", category="${newCategoryName}" — syncing to ${syncs.length} Kick channel(s)`);
 
         for (const sync of syncs) {
+            if (!sync.kick_access_token) {
+                logger.warn(`Sync ${twitchSlug}→${sync.kick_slug}: no Kick token, skipping`);
+                continue;
+            }
+
+            // Get a valid token (refresh if needed)
+            let token;
             try {
-                if (!sync.kick_access_token) {
-                    logger.warn(`Sync ${twitchSlug}→${sync.kick_slug}: no Kick token, skipping`);
-                    continue;
-                }
+                token = await this.kickAPI.getSyncToken(sync);
+            } catch (tokenErr) {
+                logger.error(`Sync ${twitchSlug}→${sync.kick_slug}: token error — ${tokenErr.message}`);
+                continue;
+            }
+            if (!token) {
+                logger.warn(`Sync ${twitchSlug}→${sync.kick_slug}: token expired and refresh failed`);
+                continue;
+            }
 
-                // Get a valid token (refresh if needed)
-                const token = await this.kickAPI.getSyncToken(sync);
-                if (!token) {
-                    logger.warn(`Sync ${twitchSlug}→${sync.kick_slug}: token expired and refresh failed`);
-                    continue;
-                }
+            // Build the update payload
+            const updates = {};
 
-                // Build the update payload
-                const updates = {};
+            // Always sync title
+            if (newTitle) {
+                updates.title = newTitle;
+            }
 
-                // Always sync title
-                if (newTitle) {
-                    updates.title = newTitle;
-                }
-
-                // Map Twitch category name to Kick category ID
-                // Falls back to "Games + Demos" if the Twitch category doesn't exist on Kick
-                if (newCategoryName) {
+            // Map Twitch category name to Kick category ID
+            // Falls back to "Games + Demos" if the Twitch category doesn't exist on Kick
+            if (newCategoryName) {
+                try {
                     let kickCategory = await this.kickAPI.findCategoryByName(newCategoryName);
                     if (kickCategory) {
                         updates.category_id = kickCategory.id;
@@ -230,22 +236,27 @@ class WebhookServer {
                             logger.warn(`Sync ${twitchSlug}→${sync.kick_slug}: category "${newCategoryName}" not found on Kick and fallback failed`);
                         }
                     }
+                } catch (catErr) {
+                    logger.warn(`Sync ${twitchSlug}→${sync.kick_slug}: category lookup error — ${catErr.message}`);
                 }
+            }
 
-                if (Object.keys(updates).length === 0) {
-                    logger.debug(`Sync ${twitchSlug}→${sync.kick_slug}: nothing to update`);
-                    continue;
-                }
+            if (Object.keys(updates).length === 0) {
+                logger.debug(`Sync ${twitchSlug}→${sync.kick_slug}: nothing to update`);
+                continue;
+            }
 
+            // Try the update — if combined title+category fails, retry with title only
+            try {
                 await this.kickAPI.updateChannel(token, updates);
-                logger.info(`Sync ${twitchSlug}→${sync.kick_slug}: Kick channel updated successfully — ${JSON.stringify(updates)}`);
+                logger.info(`Sync ${twitchSlug}→${sync.kick_slug}: Kick channel updated — ${JSON.stringify(updates)}`);
             } catch (error) {
                 const detail = error.response
                     ? `HTTP ${error.response.status}: ${JSON.stringify(error.response.data)}`
                     : error.message;
                 logger.error(`Sync ${twitchSlug}→${sync.kick_slug}: failed to update Kick channel — ${detail}`);
 
-                // If combined update failed and we had both title + category, retry with title only
+                // Retry with title only if the combined request failed
                 if (error.response?.status === 400 && updates.title && updates.category_id) {
                     try {
                         logger.info(`Sync ${twitchSlug}→${sync.kick_slug}: retrying with title only`);
