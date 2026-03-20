@@ -167,6 +167,77 @@ class WebhookServer {
             await this.notificationHandler.handleStreamOnline(event);
         } else if (subscription.type === 'channel.clip.delete') {
             await this.notificationHandler.handleClipDeleted(event);
+        } else if (subscription.type === 'channel.update') {
+            await this.handleChannelUpdate(event);
+        }
+    }
+
+    /**
+     * Handle Twitch channel.update events — sync title and category to Kick.
+     * Looks up all twitch_kick_sync pairs for this Twitch streamer and updates each Kick channel.
+     */
+    async handleChannelUpdate(event) {
+        const twitchSlug = (event.broadcaster_user_login || '').toLowerCase();
+        const newTitle = event.title;
+        const newCategoryName = event.category_name;
+
+        if (!twitchSlug) return;
+
+        // Find all Kick channels synced to this Twitch channel
+        const syncs = await this.models.getSyncsByTwitchSlug(twitchSlug);
+        if (!syncs || syncs.length === 0) {
+            logger.debug(`channel.update for ${twitchSlug}: no sync pairs configured`);
+            return;
+        }
+
+        logger.info(`channel.update for ${twitchSlug}: title="${newTitle}", category="${newCategoryName}" — syncing to ${syncs.length} Kick channel(s)`);
+
+        for (const sync of syncs) {
+            try {
+                if (!sync.kick_access_token) {
+                    logger.warn(`Sync ${twitchSlug}→${sync.kick_slug}: no Kick token, skipping`);
+                    continue;
+                }
+
+                // Get a valid token (refresh if needed)
+                const token = await this.kickAPI.getSyncToken(sync);
+                if (!token) {
+                    logger.warn(`Sync ${twitchSlug}→${sync.kick_slug}: token expired and refresh failed`);
+                    continue;
+                }
+
+                // Build the update payload
+                const updates = {};
+
+                // Always sync title
+                if (newTitle) {
+                    updates.title = newTitle;
+                }
+
+                // Map Twitch category name to Kick category ID
+                if (newCategoryName) {
+                    const kickCategory = await this.kickAPI.findCategoryByName(newCategoryName);
+                    if (kickCategory) {
+                        updates.category_id = kickCategory.id;
+                        logger.info(`Sync ${twitchSlug}→${sync.kick_slug}: mapped category "${newCategoryName}" → Kick id ${kickCategory.id} ("${kickCategory.name}")`);
+                    } else {
+                        logger.warn(`Sync ${twitchSlug}→${sync.kick_slug}: category "${newCategoryName}" not found on Kick, skipping category update`);
+                    }
+                }
+
+                if (Object.keys(updates).length === 0) {
+                    logger.debug(`Sync ${twitchSlug}→${sync.kick_slug}: nothing to update`);
+                    continue;
+                }
+
+                const result = await this.kickAPI.updateChannel(token, updates);
+                logger.info(`Sync ${twitchSlug}→${sync.kick_slug}: Kick channel updated successfully — ${JSON.stringify(updates)}`);
+            } catch (error) {
+                const detail = error.response
+                    ? `HTTP ${error.response.status}: ${JSON.stringify(error.response.data)}`
+                    : error.message;
+                logger.error(`Sync ${twitchSlug}→${sync.kick_slug}: failed to update Kick channel — ${detail}`);
+            }
         }
     }
 
@@ -287,14 +358,14 @@ class WebhookServer {
                 return res.status(400).send(
                     `<html><body><h2>Authorization Failed</h2>` +
                     `<p>${error_description || oauthError}</p>` +
-                    `<p>You can close this window and try again with <code>/kickauth</code>.</p></body></html>`
+                    `<p>You can close this window and try again.</p></body></html>`
                 );
             }
 
             if (!code || !state) {
                 return res.status(400).send(
                     `<html><body><h2>Missing Parameters</h2>` +
-                    `<p>No authorization code received. Try again with <code>/kickauth</code>.</p></body></html>`
+                    `<p>No authorization code received.</p></body></html>`
                 );
             }
 
@@ -305,7 +376,12 @@ class WebhookServer {
                 );
             }
 
-            // Exchange the authorization code for tokens
+            // Check if this is a sync-specific OAuth callback
+            if (this.kickAPI.pendingSyncPKCE.has(state)) {
+                return this.handleSyncOAuthCallback(code, state, res);
+            }
+
+            // Otherwise, handle as the general /kickauth flow
             await this.kickAPI.exchangeCodeForToken(code, state);
 
             logger.info('Kick OAuth callback: user token obtained successfully');
@@ -324,7 +400,30 @@ class WebhookServer {
             return res.status(500).send(
                 `<html><body><h2>Authorization Failed</h2>` +
                 `<p>${error.message}</p>` +
-                `<p>Try again with <code>/kickauth</code> in Discord.</p></body></html>`
+                `<p>Try again in Discord.</p></body></html>`
+            );
+        }
+    }
+
+    async handleSyncOAuthCallback(code, state, res) {
+        try {
+            const result = await this.kickAPI.exchangeSyncCodeForToken(code, state);
+
+            logger.info(`Kick sync OAuth callback: token obtained for ${result.twitchSlug}→${result.kickSlug}`);
+
+            return res.status(200).send(
+                `<html><body style="font-family: system-ui; max-width: 500px; margin: 80px auto; text-align: center;">` +
+                `<h2 style="color: #53FC18;">Sync Authorization Successful!</h2>` +
+                `<p>Twitch <strong>${result.twitchSlug}</strong> → Kick <strong>${result.kickSlug}</strong></p>` +
+                `<p>Title and category changes on Twitch will now be synced to Kick automatically.</p>` +
+                `<p>You can close this window.</p></body></html>`
+            );
+        } catch (error) {
+            logger.error('Kick sync OAuth callback error:', error.message);
+            return res.status(500).send(
+                `<html><body><h2>Sync Authorization Failed</h2>` +
+                `<p>${error.message}</p>` +
+                `<p>Try again with <code>/sync add</code> in Discord.</p></body></html>`
             );
         }
     }

@@ -419,6 +419,69 @@ class TwitchAPI {
         }
     }
 
+    async subscribeToChannelUpdate(userId, streamerName) {
+        // Check for existing subscription of this type
+        const existing = await this.models.getEventSubSubscription(streamerName, 'channel.update');
+        if (existing) {
+            logger.info(`channel.update subscription already exists for ${streamerName}`);
+            return existing;
+        }
+
+        try {
+            const subscription = await this.createEventSubSubscription(
+                'channel.update',
+                { broadcaster_user_id: userId },
+                {
+                    method: 'webhook',
+                    callback: process.env.WEBHOOK_URL,
+                    secret: process.env.WEBHOOK_SECRET
+                }
+            );
+
+            await this.models.addEventSubSubscription(
+                subscription.id,
+                streamerName,
+                userId,
+                'enabled',
+                'channel.update'
+            );
+
+            logger.info(`Created channel.update subscription for ${streamerName}: ${subscription.id}`);
+            return subscription;
+        } catch (error) {
+            if (error.response?.status === 409) {
+                logger.warn(`channel.update subscription already exists on Twitch for ${streamerName}`);
+                const existingTwitchSub = await this.findExistingSubscription(userId, 'channel.update');
+                if (existingTwitchSub) {
+                    await this.models.addEventSubSubscription(
+                        existingTwitchSub.id, streamerName, userId, 'enabled', 'channel.update'
+                    );
+                    return existingTwitchSub;
+                }
+                return null;
+            }
+            logger.error(`Failed to subscribe to channel.update for ${streamerName}:`, error.message);
+            throw error;
+        }
+    }
+
+    async unsubscribeFromChannelUpdate(streamerName) {
+        const subscription = await this.models.getEventSubSubscription(streamerName, 'channel.update');
+        if (!subscription) {
+            logger.info(`No channel.update subscription found for ${streamerName}`);
+            return;
+        }
+
+        try {
+            await this.deleteEventSubSubscription(subscription.subscription_id);
+            await this.models.removeEventSubSubscription(streamerName, 'channel.update');
+            logger.info(`Removed channel.update subscription for ${streamerName}`);
+        } catch (error) {
+            logger.error(`Failed to unsubscribe from channel.update for ${streamerName}:`, error);
+            throw error;
+        }
+    }
+
     async getClips(userId, startedAt = null, endedAt = null, first = 20) {
         try {
             const params = {

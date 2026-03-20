@@ -25,6 +25,14 @@ class KickAPI {
         // Pending PKCE state for OAuth flow (in-memory, survives until bot restart)
         this.pendingPKCE = null;
 
+        // Pending PKCE states for per-streamer sync OAuth flows
+        // Keyed by state string → { codeVerifier, twitchSlug, kickSlug, createdAt }
+        this.pendingSyncPKCE = new Map();
+
+        // Category cache for Twitch→Kick category mapping
+        this.categoryCache = null;
+        this.categoryCacheExpiry = 0;
+
         // RSA public key for webhook signature verification
         this.publicKey = null;
 
@@ -585,6 +593,206 @@ class KickAPI {
             logger[level](`Kick: unofficial clips unavailable for ${slug}: ${detail}`);
             return [];
         }
+    }
+
+    // =========================================================================
+    // Category cache (for Twitch→Kick category mapping)
+    // =========================================================================
+
+    async getCategories() {
+        // Return cached categories if still fresh (1 hour TTL)
+        if (this.categoryCache && Date.now() < this.categoryCacheExpiry) {
+            return this.categoryCache;
+        }
+
+        await this.ensureToken();
+        const response = await axios.get(`${this.publicApiBase}/categories`, {
+            headers: {
+                Authorization: `Bearer ${this.accessToken}`,
+                Accept: 'application/json',
+            },
+            timeout: 15000,
+        });
+
+        this.categoryCache = response.data?.data || [];
+        this.categoryCacheExpiry = Date.now() + 60 * 60 * 1000; // 1 hour
+        logger.info(`Kick: cached ${this.categoryCache.length} categories`);
+        return this.categoryCache;
+    }
+
+    /**
+     * Find a Kick category by name (case-insensitive exact match).
+     * Returns the category object { id, name, slug } or null.
+     */
+    async findCategoryByName(name) {
+        if (!name) return null;
+        const categories = await this.getCategories();
+        const lowerName = name.toLowerCase();
+        return categories.find(c => c.name.toLowerCase() === lowerName) || null;
+    }
+
+    // =========================================================================
+    // Channel update (requires channel:write scope — uses per-sync token)
+    // =========================================================================
+
+    /**
+     * Update a Kick channel's stream title and/or category.
+     * Requires a user access token with channel:write scope.
+     * @param {string} token - The user access token for the Kick streamer
+     * @param {object} updates - { title, category_id }
+     */
+    async updateChannel(token, updates) {
+        const body = {};
+        if (updates.title !== undefined) body.title = updates.title;
+        if (updates.category_id !== undefined) body.category_id = updates.category_id;
+
+        if (Object.keys(body).length === 0) return null;
+
+        const response = await axios.patch(`${this.publicApiBase}/channels`, body, {
+            headers: {
+                Authorization: `Bearer ${token}`,
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+            },
+            timeout: 10000,
+        });
+
+        return response.data;
+    }
+
+    // =========================================================================
+    // Per-streamer sync OAuth flow (channel:write scope)
+    // =========================================================================
+
+    /**
+     * Generate an OAuth authorization URL for a specific Twitch↔Kick sync pair.
+     * The streamer authenticates their own Kick account.
+     */
+    getSyncAuthorizationUrl(twitchSlug, kickSlug) {
+        if (!this.redirectUri) {
+            throw new Error('No redirect URI configured. Set KICK_REDIRECT_URI or WEBHOOK_URL in .env');
+        }
+
+        const pkce = this.generatePKCEParams();
+
+        this.pendingSyncPKCE.set(pkce.state, {
+            codeVerifier: pkce.codeVerifier,
+            twitchSlug,
+            kickSlug,
+            createdAt: Date.now(),
+        });
+
+        // Clean up expired pending states (older than 10 min)
+        const now = Date.now();
+        for (const [st, val] of this.pendingSyncPKCE) {
+            if (now - val.createdAt > 10 * 60 * 1000) {
+                this.pendingSyncPKCE.delete(st);
+            }
+        }
+
+        const params = new URLSearchParams({
+            response_type: 'code',
+            client_id: this.clientId,
+            redirect_uri: this.redirectUri,
+            scope: 'channel:write',
+            code_challenge: pkce.codeChallenge,
+            code_challenge_method: 'S256',
+            state: pkce.state,
+        });
+
+        return `${this.oauthUrl}/oauth/authorize?${params.toString()}`;
+    }
+
+    /**
+     * Exchange an authorization code for a sync-specific user token.
+     * Returns { twitchSlug, kickSlug, access_token, refresh_token, ... }
+     */
+    async exchangeSyncCodeForToken(code, state) {
+        const pending = this.pendingSyncPKCE.get(state);
+        if (!pending) {
+            throw new Error('No pending sync PKCE state. Use /sync to start.');
+        }
+
+        if (Date.now() - pending.createdAt > 10 * 60 * 1000) {
+            this.pendingSyncPKCE.delete(state);
+            throw new Error('Sync PKCE state expired. Use /sync again.');
+        }
+
+        const { codeVerifier, twitchSlug, kickSlug } = pending;
+        this.pendingSyncPKCE.delete(state);
+
+        const response = await axios.post(
+            `${this.oauthUrl}/oauth/token`,
+            new URLSearchParams({
+                grant_type: 'authorization_code',
+                client_id: this.clientId,
+                client_secret: this.clientSecret,
+                redirect_uri: this.redirectUri,
+                code,
+                code_verifier: codeVerifier,
+            }),
+            { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+        );
+
+        const { access_token, refresh_token, expires_in, scope } = response.data;
+        const expiresAt = new Date(Date.now() + expires_in * 1000);
+
+        // Store the token in the sync table
+        await this.models.saveSyncKickToken(twitchSlug, kickSlug, access_token, refresh_token, expiresAt, scope || null);
+        logger.info(`Kick sync token obtained for ${twitchSlug}→${kickSlug}`);
+
+        return { twitchSlug, kickSlug, access_token, refresh_token, expires_in, scope };
+    }
+
+    /**
+     * Refresh a sync-specific token using its refresh_token.
+     * Returns the new access token or null on failure.
+     */
+    async refreshSyncToken(syncRow) {
+        if (!syncRow.kick_refresh_token) return null;
+
+        try {
+            const response = await axios.post(
+                `${this.oauthUrl}/oauth/token`,
+                new URLSearchParams({
+                    grant_type: 'refresh_token',
+                    client_id: this.clientId,
+                    client_secret: this.clientSecret,
+                    refresh_token: syncRow.kick_refresh_token,
+                }),
+                { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+            );
+
+            const { access_token, refresh_token, expires_in, scope } = response.data;
+            const expiresAt = new Date(Date.now() + expires_in * 1000);
+
+            await this.models.saveSyncKickToken(
+                syncRow.twitch_slug, syncRow.kick_slug,
+                access_token, refresh_token, expiresAt, scope || null
+            );
+
+            logger.info(`Kick sync token refreshed for ${syncRow.twitch_slug}→${syncRow.kick_slug}`);
+            return access_token;
+        } catch (error) {
+            logger.error(`Failed to refresh sync token for ${syncRow.twitch_slug}→${syncRow.kick_slug}:`, error.message);
+            return null;
+        }
+    }
+
+    /**
+     * Get a valid access token for a sync pair, refreshing if needed.
+     * Returns the token string or null if unavailable.
+     */
+    async getSyncToken(syncRow) {
+        if (!syncRow.kick_access_token) return null;
+
+        const expiresAt = new Date(syncRow.kick_token_expires_at);
+        if ((expiresAt - Date.now()) > 5 * 60 * 1000) {
+            return syncRow.kick_access_token;
+        }
+
+        // Token expired — try refreshing
+        return this.refreshSyncToken(syncRow);
     }
 
     // =========================================================================

@@ -239,6 +239,7 @@ class Database {
                 'kick_stream_polling_state',
                 'kick_notification_cooldowns',
                 'kick_clip_discord_messages',
+                'twitch_kick_sync',
             ];
 
             this.db.all(

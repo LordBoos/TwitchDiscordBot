@@ -598,6 +598,51 @@ class Models {
         const sql = `DELETE FROM kick_clip_discord_messages WHERE clip_id = ?`;
         return await this.db.run(sql, [clipId]);
     }
+    // =========================================================================
+    // Twitch↔Kick sync operations
+    // =========================================================================
+
+    async addTwitchKickSync(twitchSlug, kickSlug, twitchUserId = null) {
+        const sql = `
+            INSERT OR REPLACE INTO twitch_kick_sync
+            (twitch_slug, kick_slug, twitch_user_id, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        `;
+        return await this.db.run(sql, [twitchSlug.toLowerCase(), kickSlug.toLowerCase(), twitchUserId]);
+    }
+
+    async removeTwitchKickSync(twitchSlug, kickSlug) {
+        const sql = `DELETE FROM twitch_kick_sync WHERE twitch_slug = ? AND kick_slug = ?`;
+        return await this.db.run(sql, [twitchSlug.toLowerCase(), kickSlug.toLowerCase()]);
+    }
+
+    async getTwitchKickSync(twitchSlug, kickSlug) {
+        const sql = `SELECT * FROM twitch_kick_sync WHERE twitch_slug = ? AND kick_slug = ?`;
+        return await this.db.get(sql, [twitchSlug.toLowerCase(), kickSlug.toLowerCase()]);
+    }
+
+    async getSyncsByTwitchSlug(twitchSlug) {
+        const sql = `SELECT * FROM twitch_kick_sync WHERE twitch_slug = ?`;
+        return await this.db.all(sql, [twitchSlug.toLowerCase()]);
+    }
+
+    async getAllTwitchKickSyncs() {
+        const sql = `SELECT * FROM twitch_kick_sync`;
+        return await this.db.all(sql);
+    }
+
+    async saveSyncKickToken(twitchSlug, kickSlug, accessToken, refreshToken, expiresAt, scope = null) {
+        const sql = `
+            UPDATE twitch_kick_sync
+            SET kick_access_token = ?, kick_refresh_token = ?, kick_token_expires_at = ?,
+                kick_token_scope = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE twitch_slug = ? AND kick_slug = ?
+        `;
+        return await this.db.run(sql, [
+            accessToken, refreshToken, expiresAt.toISOString(), scope,
+            twitchSlug.toLowerCase(), kickSlug.toLowerCase()
+        ]);
+    }
 }
 
 module.exports = Models;

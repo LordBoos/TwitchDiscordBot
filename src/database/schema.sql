@@ -202,6 +202,22 @@ CREATE TABLE IF NOT EXISTS kick_clip_discord_messages (
     UNIQUE(clip_id, channel_id)
 );
 
+-- Twitch→Kick stream sync: pairs a Twitch streamer with a Kick account
+-- Each pair has its own Kick OAuth token (the streamer authenticates their own Kick account)
+CREATE TABLE IF NOT EXISTS twitch_kick_sync (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    twitch_slug TEXT NOT NULL,
+    kick_slug TEXT NOT NULL,
+    twitch_user_id TEXT,
+    kick_access_token TEXT,
+    kick_refresh_token TEXT,
+    kick_token_expires_at DATETIME,
+    kick_token_scope TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(twitch_slug, kick_slug)
+);
+
 -- Indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_channel_follows_channel ON channel_follows(channel_id);
 CREATE INDEX IF NOT EXISTS idx_channel_follows_streamer ON channel_follows(streamer_name);
@@ -227,3 +243,5 @@ CREATE INDEX IF NOT EXISTS idx_kick_stream_polling_slug ON kick_stream_polling_s
 CREATE INDEX IF NOT EXISTS idx_kick_cooldowns_lookup ON kick_notification_cooldowns(channel_id, streamer_slug);
 CREATE INDEX IF NOT EXISTS idx_kick_clip_discord_messages_clip ON kick_clip_discord_messages(clip_id);
 CREATE INDEX IF NOT EXISTS idx_kick_clip_discord_messages_slug ON kick_clip_discord_messages(streamer_slug);
+CREATE INDEX IF NOT EXISTS idx_twitch_kick_sync_twitch ON twitch_kick_sync(twitch_slug);
+CREATE INDEX IF NOT EXISTS idx_twitch_kick_sync_kick ON twitch_kick_sync(kick_slug);
