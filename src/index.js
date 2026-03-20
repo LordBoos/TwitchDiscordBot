@@ -31,6 +31,8 @@ class TwitchDiscordBot {
         this.client.commands = new Collection();
         this.client.twitchAPI = this.twitchAPI;
         this.client.kickAPI   = this.kickAPI;
+        this.client.models    = this.models;
+        this.client.notificationHandler = this.webhookServer?.notificationHandler || null;
         this.loadCommands();
         this.setupEventHandlers();
     }
