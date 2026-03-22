@@ -688,7 +688,7 @@ class KickAPI {
      */
     async updateChannel(token, updates) {
         const body = {};
-        if (updates.title !== undefined) body.title = String(updates.title);
+        if (updates.title !== undefined) body.stream_title = String(updates.title);
         if (updates.category_id !== undefined) body.category_id = Number(updates.category_id);
 
         if (Object.keys(body).length === 0) return null;
