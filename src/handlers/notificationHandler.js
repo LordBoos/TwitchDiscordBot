@@ -470,10 +470,13 @@ class NotificationHandler {
 
         // Add stream preview as main image (same as Twitch)
         if (thumbnail) {
+            // Try to use a larger thumbnail size (Kick provides 480.webp by default,
+            // but 720 and 1080 variants usually exist)
+            const largeThumbnail = thumbnail.replace('/480.webp', '/1080.webp');
             // Add cache-busting parameter for Discord to show fresh thumbnails
             const randomNum = Math.floor(Math.random() * (100000 - 100 + 1)) + 100;
             const timestamp = Math.floor(Date.now() / 1000);
-            const urlWithParam = `${thumbnail}?${randomNum}=${timestamp}`;
+            const urlWithParam = `${largeThumbnail}?${randomNum}=${timestamp}`;
             embed.setImage(urlWithParam);
             logger.info(`Kick: added stream preview: ${urlWithParam}`);
         }
