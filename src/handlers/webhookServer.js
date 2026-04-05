@@ -361,12 +361,12 @@ class WebhookServer {
                             };
                         }
 
-                        // Wait a bit longer for the stream thumbnail to be generated on Kick's CDN.
+                        // Wait for the stream thumbnail to be generated on Kick's CDN.
                         // The API returns the thumbnail URL immediately but the actual image may
                         // not be ready yet, causing Discord to skip it in the embed.
                         if (livestream.thumbnail) {
-                            logger.info(`Kick: waiting 10s for stream thumbnail to be ready for ${slug}...`);
-                            await new Promise(resolve => setTimeout(resolve, 10000));
+                            logger.info(`Kick: waiting 30s for stream thumbnail CDN to be ready for ${slug}...`);
+                            await new Promise(resolve => setTimeout(resolve, 30000));
                         }
 
                         await this.notificationHandler.handleKickStreamOnline(slug, livestream);
