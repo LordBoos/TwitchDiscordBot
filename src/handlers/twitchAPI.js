@@ -281,27 +281,48 @@ class TwitchAPI {
                 sub.transport.callback === process.env.WEBHOOK_URL
             );
 
+            // Log subscription statuses for debugging
+            const statusCounts = {};
+            for (const sub of ourSubscriptions) {
+                statusCounts[sub.status] = (statusCounts[sub.status] || 0) + 1;
+            }
+            logger.info(`Found ${ourSubscriptions.length} EventSub subscription(s) on Twitch: ${JSON.stringify(statusCounts)}`);
+            for (const sub of ourSubscriptions) {
+                if (sub.status !== 'enabled') {
+                    logger.warn(`  ⚠️ ${sub.type} for broadcaster ${sub.condition.broadcaster_user_id}: status="${sub.status}"`);
+                }
+            }
+
             // Get all subscriptions from our database
             const dbSubscriptions = await this.models.getAllEventSubSubscriptions();
 
             let cleanedCount = 0;
             let syncedCount = 0;
 
-            // Check for subscriptions on Twitch that aren't in our database
+            // Check for subscriptions on Twitch that aren't in our database or have bad status
             for (const twitchSub of ourSubscriptions) {
                 const dbSub = dbSubscriptions.find(db => db.subscription_id === twitchSub.id);
+
+                // Handle non-enabled subscriptions (revoked, webhook_callback_verification_failed, etc.)
+                if (dbSub && twitchSub.status !== 'enabled') {
+                    logger.warn(`⚠️ Subscription for ${dbSub.streamer_name} has status "${twitchSub.status}" — deleting and will re-create`);
+                    try {
+                        await this.deleteEventSubSubscription(twitchSub.id);
+                    } catch (e) { /* ignore delete errors */ }
+                    await this.models.removeEventSubSubscription(dbSub.streamer_name);
+                    // Will be re-created in the "DB but not on Twitch" loop below
+                    cleanedCount++;
+                    continue;
+                }
 
                 if (!dbSub) {
                     // This subscription exists on Twitch but not in our database
                     if (twitchSub.type === 'stream.online') {
-                        // Try to determine the streamer name from the user ID
                         try {
                             const user = await this.getUserById(twitchSub.condition.broadcaster_user_id);
                             if (user) {
-                                // Check if we actually need this subscription
                                 const follows = await this.models.getAllFollowsForStreamer(user.login);
                                 if (follows.length > 0) {
-                                    // We need this subscription, sync it to database
                                     await this.models.addEventSubSubscription(
                                         twitchSub.id,
                                         user.login,
@@ -310,7 +331,6 @@ class TwitchAPI {
                                     logger.info(`✅ Synced existing subscription for ${user.login}`);
                                     syncedCount++;
                                 } else {
-                                    // We don't need this subscription, delete it
                                     await this.deleteEventSubSubscription(twitchSub.id);
                                     logger.info(`🗑️ Deleted orphaned subscription for ${user.login}`);
                                     cleanedCount++;
@@ -324,18 +344,33 @@ class TwitchAPI {
             }
 
             // Check for subscriptions in our database that don't exist on Twitch
+            let recreatedCount = 0;
             for (const dbSub of dbSubscriptions) {
                 const twitchSub = twitchSubscriptions.find(t => t.id === dbSub.subscription_id);
 
                 if (!twitchSub) {
-                    // This subscription is in our database but not on Twitch
-                    await this.models.removeEventSubSubscription(dbSub.streamer_name);
-                    logger.info(`🗑️ Removed stale database entry for ${dbSub.streamer_name}`);
-                    cleanedCount++;
+                    // Subscription was revoked/expired on Twitch — check if we still need it
+                    const follows = await this.models.getAllFollowsForStreamer(dbSub.streamer_name);
+                    if (follows.length > 0) {
+                        // Still has followers — re-create the subscription
+                        logger.warn(`⚠️ Subscription for ${dbSub.streamer_name} was revoked by Twitch, re-creating...`);
+                        await this.models.removeEventSubSubscription(dbSub.streamer_name);
+                        try {
+                            await this.subscribeToStreamOnline(dbSub.streamer_id, dbSub.streamer_name);
+                            recreatedCount++;
+                        } catch (err) {
+                            logger.error(`Failed to re-create subscription for ${dbSub.streamer_name}: ${err.message}`);
+                        }
+                    } else {
+                        // No more followers — just clean up the stale DB entry
+                        await this.models.removeEventSubSubscription(dbSub.streamer_name);
+                        logger.info(`🗑️ Removed stale database entry for ${dbSub.streamer_name}`);
+                        cleanedCount++;
+                    }
                 }
             }
 
-            logger.info(`✅ Cleanup complete: ${syncedCount} synced, ${cleanedCount} cleaned`);
+            logger.info(`✅ Cleanup complete: ${syncedCount} synced, ${recreatedCount} re-created, ${cleanedCount} cleaned`);
 
         } catch (error) {
             logger.error('Failed to cleanup orphaned subscriptions:', error);
