@@ -74,6 +74,11 @@ class Models {
         return await this.db.all(sql, [streamerName.toLowerCase()]);
     }
 
+    async getAllUniqueFollowedStreamers() {
+        const sql = `SELECT DISTINCT streamer_name FROM channel_follows`;
+        return await this.db.all(sql);
+    }
+
     // EventSub subscription operations
     async addEventSubSubscription(subscriptionId, streamerName, streamerId, status = 'enabled', type = 'stream.online') {
         const sql = `

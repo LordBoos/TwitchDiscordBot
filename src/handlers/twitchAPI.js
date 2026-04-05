@@ -378,16 +378,66 @@ class TwitchAPI {
 
             logger.info(`✅ Cleanup complete: ${syncedCount} synced, ${recreatedCount} re-created, ${cleanedCount} cleaned`);
 
+            // Safety net: ensure every followed streamer has a subscription on Twitch
+            await this.ensureAllSubscriptions();
+
         } catch (error) {
             logger.error('Failed to cleanup orphaned subscriptions:', error);
+        }
+    }
+
+    async ensureAllSubscriptions() {
+        try {
+            const allFollowedStreamers = await this.models.getAllUniqueFollowedStreamers();
+            const dbSubs = await this.models.getAllEventSubSubscriptions();
+            const dbSubStreamers = new Set(dbSubs.map(s => s.streamer_name));
+
+            let created = 0;
+            for (const streamer of allFollowedStreamers) {
+                if (!dbSubStreamers.has(streamer.streamer_name)) {
+                    logger.warn(`⚠️ No subscription found for followed streamer ${streamer.streamer_name} — creating`);
+                    try {
+                        const user = await this.getUserByName(streamer.streamer_name);
+                        if (user) {
+                            await this.subscribeToStreamOnline(user.id, streamer.streamer_name);
+                            created++;
+                        } else {
+                            logger.warn(`Could not find Twitch user ${streamer.streamer_name}`);
+                        }
+                    } catch (err) {
+                        logger.error(`Failed to create subscription for ${streamer.streamer_name}: ${err.message}`);
+                    }
+                }
+            }
+            if (created > 0) {
+                logger.info(`✅ Created ${created} missing subscription(s) for followed streamers`);
+            }
+        } catch (error) {
+            logger.error('Failed to ensure all subscriptions:', error);
         }
     }
 
     async subscribeToStreamOnline(userId, streamerName) {
         const existingSubscription = await this.models.getEventSubSubscription(streamerName);
         if (existingSubscription) {
-            logger.info(`EventSub subscription already exists for ${streamerName}`);
-            return existingSubscription;
+            // Verify the subscription actually exists and is enabled on Twitch
+            try {
+                const twitchSubs = await this.getAllEventSubSubscriptions();
+                const twitchSub = twitchSubs.find(s => s.id === existingSubscription.subscription_id);
+                if (twitchSub && twitchSub.status === 'enabled') {
+                    logger.debug(`EventSub subscription for ${streamerName} verified on Twitch`);
+                    return existingSubscription;
+                }
+                // Subscription missing or not enabled on Twitch — remove stale DB entry and re-create
+                logger.warn(`EventSub subscription for ${streamerName} not found/enabled on Twitch (status: ${twitchSub?.status || 'missing'}) — re-creating`);
+                if (twitchSub) {
+                    try { await this.deleteEventSubSubscription(twitchSub.id); } catch (e) { /* ignore */ }
+                }
+                await this.models.removeEventSubSubscription(streamerName);
+            } catch (error) {
+                logger.warn(`Could not verify subscription for ${streamerName}, assuming valid: ${error.message}`);
+                return existingSubscription;
+            }
         }
 
         try {

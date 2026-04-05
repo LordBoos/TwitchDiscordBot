@@ -46,17 +46,12 @@ module.exports = {
             // Add to database
             await models.addChannelFollow(guildId, channelId, streamerName);
 
-            // Check if we need to create an EventSub subscription
-            const allFollows = await models.getAllFollowsForStreamer(streamerName);
-            if (allFollows.length === 1) {
-                // This is the first channel following this streamer, create subscription
-                try {
-                    await twitchAPI.subscribeToStreamOnline(twitchUser.id, streamerName);
-                    logger.info(`Created new EventSub subscription for ${streamerName}`);
-                } catch (error) {
-                    logger.error(`Failed to create EventSub subscription for ${streamerName}:`, error);
-                    // Don't fail the command, just log the error
-                }
+            // Ensure an EventSub subscription exists for this streamer
+            try {
+                await twitchAPI.subscribeToStreamOnline(twitchUser.id, streamerName);
+            } catch (error) {
+                logger.error(`Failed to ensure EventSub subscription for ${streamerName}:`, error);
+                // Don't fail the command, just log the error
             }
 
             await interaction.editReply({
