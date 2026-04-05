@@ -298,25 +298,28 @@ class TwitchAPI {
 
             let cleanedCount = 0;
             let syncedCount = 0;
+            let recreatedCount = 0;
+
+            // Collect streamers that need re-creation (bad status on Twitch)
+            const needsRecreation = [];
 
             // Check for subscriptions on Twitch that aren't in our database or have bad status
             for (const twitchSub of ourSubscriptions) {
                 const dbSub = dbSubscriptions.find(db => db.subscription_id === twitchSub.id);
 
-                // Handle non-enabled subscriptions (revoked, webhook_callback_verification_failed, etc.)
+                // Handle non-enabled subscriptions (revoked, notification_failures_exceeded, etc.)
                 if (dbSub && twitchSub.status !== 'enabled') {
                     logger.warn(`⚠️ Subscription for ${dbSub.streamer_name} has status "${twitchSub.status}" — deleting and will re-create`);
                     try {
                         await this.deleteEventSubSubscription(twitchSub.id);
                     } catch (e) { /* ignore delete errors */ }
                     await this.models.removeEventSubSubscription(dbSub.streamer_name);
-                    // Will be re-created in the "DB but not on Twitch" loop below
+                    needsRecreation.push({ streamer_name: dbSub.streamer_name, streamer_id: dbSub.streamer_id });
                     cleanedCount++;
                     continue;
                 }
 
                 if (!dbSub) {
-                    // This subscription exists on Twitch but not in our database
                     if (twitchSub.type === 'stream.online') {
                         try {
                             const user = await this.getUserById(twitchSub.condition.broadcaster_user_id);
@@ -343,30 +346,33 @@ class TwitchAPI {
                 }
             }
 
-            // Check for subscriptions in our database that don't exist on Twitch
-            let recreatedCount = 0;
+            // Check for subscriptions in our database that don't exist on Twitch at all
+            const processedStreamers = new Set(needsRecreation.map(s => s.streamer_name));
             for (const dbSub of dbSubscriptions) {
-                const twitchSub = twitchSubscriptions.find(t => t.id === dbSub.subscription_id);
-
+                if (processedStreamers.has(dbSub.streamer_name)) continue;
+                const twitchSub = ourSubscriptions.find(t => t.id === dbSub.subscription_id);
                 if (!twitchSub) {
-                    // Subscription was revoked/expired on Twitch — check if we still need it
                     const follows = await this.models.getAllFollowsForStreamer(dbSub.streamer_name);
                     if (follows.length > 0) {
-                        // Still has followers — re-create the subscription
-                        logger.warn(`⚠️ Subscription for ${dbSub.streamer_name} was revoked by Twitch, re-creating...`);
+                        logger.warn(`⚠️ Subscription for ${dbSub.streamer_name} missing from Twitch, will re-create`);
                         await this.models.removeEventSubSubscription(dbSub.streamer_name);
-                        try {
-                            await this.subscribeToStreamOnline(dbSub.streamer_id, dbSub.streamer_name);
-                            recreatedCount++;
-                        } catch (err) {
-                            logger.error(`Failed to re-create subscription for ${dbSub.streamer_name}: ${err.message}`);
-                        }
+                        needsRecreation.push({ streamer_name: dbSub.streamer_name, streamer_id: dbSub.streamer_id });
                     } else {
-                        // No more followers — just clean up the stale DB entry
                         await this.models.removeEventSubSubscription(dbSub.streamer_name);
                         logger.info(`🗑️ Removed stale database entry for ${dbSub.streamer_name}`);
                         cleanedCount++;
                     }
+                }
+            }
+
+            // Re-create all subscriptions that need it
+            for (const { streamer_name, streamer_id } of needsRecreation) {
+                try {
+                    await this.subscribeToStreamOnline(streamer_id, streamer_name);
+                    logger.info(`✅ Re-created subscription for ${streamer_name}`);
+                    recreatedCount++;
+                } catch (err) {
+                    logger.error(`Failed to re-create subscription for ${streamer_name}: ${err.message}`);
                 }
             }
 
