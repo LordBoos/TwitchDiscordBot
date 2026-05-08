@@ -204,29 +204,30 @@ class KickAPI {
      * Load a previously stored user token from the database.
      */
     async loadUserToken() {
-        try {
-            const stored = await this.models.getKickUserToken();
-            if (!stored) return;
+        const stored = await this.models.getKickUserToken();
+        if (!stored) return;
 
-            const expiresAt = new Date(stored.expires_at);
-            const now = new Date();
+        const expiresAt = new Date(stored.expires_at);
+        const now = new Date();
 
-            if ((expiresAt - now) > 5 * 60 * 1000) {
-                // Token still valid
-                this.userAccessToken = stored.access_token;
-                this.userRefreshToken = stored.refresh_token;
-                this.userTokenExpiresAt = expiresAt;
-                this.hasUserToken = true;
-                logger.info('Loaded Kick user access token from database');
-            } else if (stored.refresh_token) {
-                // Token expired but we have a refresh token — try refreshing
-                logger.info('Kick user token expired, attempting refresh...');
+        if ((expiresAt - now) > 5 * 60 * 1000) {
+            // Token still valid
+            this.userAccessToken = stored.access_token;
+            this.userRefreshToken = stored.refresh_token;
+            this.userTokenExpiresAt = expiresAt;
+            this.hasUserToken = true;
+            logger.info('Loaded Kick user access token from database');
+        } else if (stored.refresh_token) {
+            // Token expired but we have a refresh token — try refreshing
+            logger.info('Kick user token expired, attempting refresh...');
+            try {
                 await this.refreshUserToken(stored.refresh_token);
-            } else {
-                logger.warn('Kick user token expired and no refresh token available. Run /kickauth to re-authorize.');
+            } catch (error) {
+                // refreshUserToken already logged the detailed reason — just note we couldn't recover.
+                logger.warn('Kick user token unavailable until /kickauth is run again');
             }
-        } catch (error) {
-            logger.warn('Could not load Kick user token:', error.message);
+        } else {
+            logger.warn('Kick user token expired and no refresh token available. Run /kickauth to re-authorize.');
         }
     }
 
@@ -263,9 +264,35 @@ class KickAPI {
             await this.models.saveKickUserToken(this.userAccessToken, this.userRefreshToken, expiresAt, scope || null);
             logger.info('Kick user access token refreshed');
         } catch (error) {
-            logger.error('Failed to refresh Kick user token:', error.message);
+            const status = error.response?.status;
+            const data = error.response?.data;
+            const detail = data
+                ? `HTTP ${status}: ${typeof data === 'string' ? data : JSON.stringify(data)}`
+                : (error.message || 'unknown error');
+            logger.error(`Failed to refresh Kick user token: ${detail}`);
             this.hasUserToken = false;
-            // Don't delete stored token — the refresh token might still work later
+
+            // If Kick says the refresh token itself is dead (invalid_grant / 400 / 401),
+            // the stored token will never recover — purge it so we don't keep retrying
+            // the same dead grant on every restart. The user must run /kickauth again.
+            const errorCode = data?.error;
+            const isPermanentlyInvalid =
+                errorCode === 'invalid_grant' ||
+                errorCode === 'invalid_token' ||
+                errorCode === 'invalid_request' ||
+                status === 400 ||
+                status === 401;
+            if (isPermanentlyInvalid) {
+                try {
+                    await this.models.deleteKickUserToken();
+                    this.userAccessToken = null;
+                    this.userRefreshToken = null;
+                    this.userTokenExpiresAt = null;
+                    logger.warn('Kick refresh token is no longer valid — stored token deleted. Run /kickauth to re-authorize.');
+                } catch (deleteError) {
+                    logger.error('Failed to delete dead Kick user token:', deleteError.message);
+                }
+            }
             throw error;
         }
     }
