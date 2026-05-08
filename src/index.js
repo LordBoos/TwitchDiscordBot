@@ -27,6 +27,7 @@ class TwitchDiscordBot {
         // Initialize polling services (started after bot is ready)
         this.clipPollingService = null;
         this.kickPollingService = null;
+        this.subscriptionHealthCheckInterval = null;
 
         this.client.commands = new Collection();
         this.client.twitchAPI = this.twitchAPI;
@@ -64,6 +65,12 @@ class TwitchDiscordBot {
 
             // Clean up orphaned EventSub subscriptions
             await this.twitchAPI.cleanupOrphanedSubscriptions();
+
+            // Periodically re-check EventSub health: Twitch can revoke subscriptions
+            // mid-runtime (notification_failures_exceeded, authorization_revoked, etc.)
+            // and without this the bot would silently stop delivering notifications
+            // until the next restart.
+            this.startSubscriptionHealthCheck();
 
             // Start Twitch clip polling service after bot is ready
             this.startClipPollingService();
@@ -111,6 +118,20 @@ class TwitchDiscordBot {
         this.client.on('warn', (warning) => {
             logger.warn('Discord client warning:', warning);
         });
+    }
+
+    startSubscriptionHealthCheck() {
+        const intervalMs = parseInt(process.env.EVENTSUB_HEALTH_CHECK_INTERVAL_MS) || 60 * 60 * 1000;
+        logger.info(`Scheduling EventSub health check every ${Math.round(intervalMs / 60000)} minutes`);
+
+        this.subscriptionHealthCheckInterval = setInterval(async () => {
+            try {
+                logger.info('🔄 Running scheduled EventSub health check...');
+                await this.twitchAPI.cleanupOrphanedSubscriptions();
+            } catch (error) {
+                logger.error('Scheduled EventSub health check failed:', error);
+            }
+        }, intervalMs);
     }
 
     startKickPollingService() {
@@ -229,6 +250,12 @@ class TwitchDiscordBot {
         logger.info('Shutting down bot...');
 
         try {
+            // Stop the EventSub health check interval
+            if (this.subscriptionHealthCheckInterval) {
+                clearInterval(this.subscriptionHealthCheckInterval);
+                this.subscriptionHealthCheckInterval = null;
+            }
+
             // Stop Twitch clip polling service
             if (this.clipPollingService) {
                 this.clipPollingService.stop();
