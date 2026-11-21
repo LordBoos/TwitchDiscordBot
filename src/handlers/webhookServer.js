@@ -15,6 +15,9 @@ class WebhookServer {
         this.port = process.env.WEBHOOK_PORT || 3000;
         this.secret = process.env.WEBHOOK_SECRET;
 
+        // twitch_kick_sync.id → last Twitch chat reminder that Kick authorization is missing
+        this.syncReminderSentAt = new Map();
+
         this.notificationHandler = new NotificationHandler(models, twitchAPI, discordBot, kickAPI);
 
         this.setupMiddleware();
@@ -214,6 +217,13 @@ class WebhookServer {
         for (const sync of syncs) {
             if (!sync.kick_access_token) {
                 logger.warn(`Sync ${twitchSlug}→${sync.kick_slug}: no Kick token, skipping`);
+                // The streamer just changed the title – a good moment to remind them in chat.
+                // ponytail: in-memory rate limit, resets on restart (one extra reminder at most)
+                const lastReminder = this.syncReminderSentAt.get(sync.id) || 0;
+                if (Date.now() - lastReminder > 6 * 60 * 60 * 1000 && this.discordBot?.remindSyncAuthInTwitchChat) {
+                    this.syncReminderSentAt.set(sync.id, Date.now());
+                    await this.discordBot.remindSyncAuthInTwitchChat(sync);
+                }
                 continue;
             }
 

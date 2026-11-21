@@ -63,11 +63,28 @@ describe('Kick sync token refresh', () => {
         expect(lost).toEqual(['jenna13']);
     });
 
-    test('network error keeps the tokens and does not report', async () => {
-        axios.post.mockRejectedValue({ code: 'ECONNRESET', message: 'socket hang up' });
+    test.each([
+        ['network error', { code: 'ECONNRESET', message: 'socket hang up' }],
+        ['403 from a proxy', { response: { status: 403, data: 'Forbidden' } }],
+        ['5xx', { response: { status: 502, data: 'Bad Gateway' } }],
+    ])('%s keeps the tokens and does not report', async (_, failure) => {
+        axios.post.mockRejectedValue(failure);
         expect(await kick.getSyncToken(await row())).toBeNull();
         expect((await row()).kick_refresh_token).toBe('RT1');
         expect(lost).toEqual([]);
+    });
+
+    test('channel.update for an unauthorized pair reminds in Twitch chat, rate-limited', async () => {
+        const WebhookServer = require('../src/handlers/webhookServer');
+        const reminders = [];
+        const bot = { remindSyncAuthInTwitchChat: async (s) => { reminders.push(s.kick_slug); } };
+        const server = new WebhookServer(models, {}, bot, kick);
+        await models.clearSyncKickToken((await row()).id);
+
+        const event = { broadcaster_user_login: 'jenna', title: 'x', category_name: 'y' };
+        await server.handleChannelUpdate(event);
+        await server.handleChannelUpdate(event);
+        expect(reminders).toEqual(['jenna13']);
     });
 
     test('401 from PATCH forces a refresh even though the token looks valid', async () => {

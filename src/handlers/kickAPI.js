@@ -831,7 +831,7 @@ class KickAPI {
      * Refresh a sync pair's token. Returns the new access token, or null when unavailable.
      *
      * Serialized per pair: Kick rotates refresh tokens, so two concurrent refreshes with
-     * the same refresh token would burn the grant. A refresh token Kick rejects (4xx,
+     * the same refresh token would burn the grant. A refresh token Kick rejects (400/401,
      * typically 401 invalid_grant) never recovers – the tokens are cleared and
      * onSyncAuthLost(row) fires so the streamer can be told to re-authorize.
      *
@@ -886,8 +886,16 @@ class KickAPI {
             const status = error.response?.status;
             const detail = status ? `HTTP ${status}: ${JSON.stringify(error.response.data)}` : (error.code || error.message);
 
-            if (status >= 400 && status < 500 && status !== 429) {
-                logger.error(`Kick rejected the sync refresh token for ${pair} (${detail}) – authorization cleared, /sync add needed`);
+            // Only Kick's real rejection (401 invalid_grant, or a 400) purges – purging is
+            // irreversible, so e.g. a 403 from a proxy/WAF must not wipe working tokens.
+            if (status === 400 || status === 401) {
+                // Grant age vs. idle time tells whether Kick expires refresh tokens after a
+                // fixed lifetime or after inactivity (not documented; prod data fit both).
+                const days = (ts) => ((Date.now() - new Date(`${ts}Z`)) / 86400000).toFixed(1);
+                logger.error(
+                    `Kick rejected the sync refresh token for ${pair} (${detail}) – authorization cleared, /sync add needed. ` +
+                    `Authorized ~${days(row.created_at)} days ago, last refreshed ~${days(row.updated_at)} days ago`
+                );
                 await this.models.clearSyncKickToken(id);
                 if (this.onSyncAuthLost) {
                     try {
@@ -897,7 +905,7 @@ class KickAPI {
                     }
                 }
             } else {
-                // Network error / 5xx / rate limit: keep the token, the next attempt may succeed.
+                // Network error / 5xx / 403 / 429: keep the token, the next attempt may succeed.
                 logger.warn(`Transient failure refreshing Kick sync token for ${pair}: ${detail}`);
             }
             return null;

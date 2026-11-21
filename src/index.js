@@ -272,14 +272,22 @@ class TwitchDiscordBot {
             }
         }
 
+        await this.remindSyncAuthInTwitchChat(sync);
+    }
+
+    /**
+     * Twitch chat part of the notice. Also called (rate-limited) from channel.update while
+     * the pair stays unauthorized – the first notice usually lands in an offline chat.
+     */
+    async remindSyncAuthInTwitchChat(sync) {
         if (!sync.twitch_user_id) return;
         try {
             await this.twitchAPI.sendChatMessage(
                 sync.twitch_user_id,
-                `⚠️ Twitch → Kick title/category sync for kick.com/${sync.kick_slug} stopped: the Kick login expired. ` +
-                `Fix: in Discord run ${fixCommand} and log in to Kick (account ${sync.kick_slug}) via the link the bot replies with.`
+                `⚠️ Twitch → Kick title/category sync for kick.com/${sync.kick_slug} is not working: the bot is not logged in to Kick (login expired). ` +
+                `Fix: in Discord run /sync add twitch:${sync.twitch_slug} kick:${sync.kick_slug} and log in to Kick (account ${sync.kick_slug}) via the link the bot replies with.`
             );
-            logger.info(`Reported lost Kick authorization for ${pair} in Twitch chat of ${sync.twitch_slug}`);
+            logger.info(`Posted Kick re-authorization notice for ${sync.twitch_slug} → ${sync.kick_slug} in Twitch chat`);
         } catch (error) {
             const detail = error.response ? `HTTP ${error.response.status}: ${JSON.stringify(error.response.data)}` : error.message;
             logger.warn(`Could not post to Twitch chat of ${sync.twitch_slug} (one-time authorization via /twitch-chat-auth needed?): ${detail}`);

@@ -138,6 +138,18 @@ Kick webhook subscriptions require a user access token (not just app credentials
 
 Without user authorization, Kick stream notifications fall back to polling (2-minute delay).
 
+### 3. Twitch → Kick Title & Category Sync
+`/sync add twitch:<slug> kick:<slug>` links a Twitch channel to a Kick channel; the Kick streamer authorizes the bot via the link in the reply (valid 10 minutes). Kick sync tokens are refreshed every 30 minutes ahead of expiry.
+
+When Kick rejects the stored login (expired or revoked), the bot clears it and posts how to re-authorize (run `/sync add` again) to the Discord channel where `/sync add` was run (mentioning whoever ran it) and to the streamer's Twitch chat. While the pair stays unauthorized, a title change on Twitch triggers a chat reminder (at most every 6 hours).
+
+Twitch chat messages need a one-time authorization:
+1. In the [Twitch Developer Console](https://dev.twitch.tv/console/apps), add the OAuth Redirect URL `https://your-domain.com/twitch-chat-auth/callback`
+2. Open `https://your-domain.com/twitch-chat-auth` logged in as the account that should post (the broadcaster, or the bot account set in `TWITCH_CHAT_BOT_LOGIN`)
+3. If the sender is a separate bot account that is not a moderator in the channel, open the same link once more logged in as the broadcaster
+
+Discord slash commands are registered per guild only and re-deployed automatically when they go missing. If another program logs in with the same bot token, make sure it does not sync application commands. A nextcord client with default settings deletes every command it does not define.
+
 ## Commands
 
 ### Twitch Stream Management
@@ -295,6 +307,8 @@ Without user authorization, Kick stream notifications fall back to polling (2-mi
 | `POST /webhook` | Twitch EventSub notifications |
 | `POST /kick-webhook` | Kick livestream event notifications |
 | `GET /kick-auth/callback` | Kick OAuth authorization callback |
+| `GET /twitch-chat-auth` | One-time Twitch authorization for posting to Twitch chat |
+| `GET /twitch-chat-auth/callback` | Twitch OAuth callback for the above |
 | `GET /health` | Health check for monitoring |
 
 ## Troubleshooting
