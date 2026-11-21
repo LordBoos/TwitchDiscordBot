@@ -1,0 +1,57 @@
+# Hlášení výsledku nasazení. Spouští ho portainer-deployer na Docker hostu
+# (github.com/LordBoos/portainer-deployer) po každém pokusu o nasazení.
+# Selhání = selhaný běh, takže GitHub pošle e-mail jako u každého jiného workflow.
+name: Deploy result
+run-name: "Deploy ${{ inputs.status }}: ${{ inputs.version }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      status:
+        description: "success | failure | test"
+        required: true
+      container:
+        description: "Kontejner"
+        required: false
+      image:
+        description: "Image"
+        required: false
+      version:
+        description: "Verze (APP_VERSION)"
+        required: false
+      message:
+        description: "Detail / chyba"
+        required: false
+
+permissions: {}
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Výsledek
+        env:
+          STATUS: ${{ inputs.status }}
+          CONTAINER: ${{ inputs.container }}
+          IMAGE: ${{ inputs.image }}
+          VERSION: ${{ inputs.version }}
+          MESSAGE: ${{ inputs.message }}
+        run: |
+          {
+            echo "### Nasazení: $STATUS"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Kontejner | \`$CONTAINER\` |"
+            echo "| Image | \`$IMAGE\` |"
+            echo "| Verze | \`$VERSION\` |"
+            echo
+            echo '```'
+            echo "$MESSAGE"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "$MESSAGE"
+          if [ "$STATUS" = "failure" ]; then
+            echo "::error title=Nasazení selhalo::$CONTAINER $VERSION – detail v summary běhu"
+            exit 1
+          fi

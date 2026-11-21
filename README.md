@@ -53,6 +53,7 @@ A comprehensive Discord bot that monitors Twitch and Kick streamers and clips, s
 - **Production Logging**: Comprehensive logging with Winston and console output
 - **Health Monitoring**: Built-in health check endpoint
 - **Automatic Migrations**: Database schema updates applied automatically on startup
+- **Automatic Deployment**: every push to `main` builds `ghcr.io/lordboos/twitchdiscordbot:latest` (GitHub Actions); [portainer-deployer](https://github.com/LordBoos/portainer-deployer) pulls it within ~2 minutes and redeploys the Portainer stack defined in `portainer-stack.yml`. The outcome is reported as a *Deploy result* workflow run
 
 ## Quick Start
 
