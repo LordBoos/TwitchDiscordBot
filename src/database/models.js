@@ -607,13 +607,33 @@ class Models {
     // Twitch↔Kick sync operations
     // =========================================================================
 
-    async addTwitchKickSync(twitchSlug, kickSlug, twitchUserId = null) {
+    async addTwitchKickSync(twitchSlug, kickSlug, twitchUserId = null, discordChannelId = null, discordUserId = null) {
         const sql = `
             INSERT OR REPLACE INTO twitch_kick_sync
-            (twitch_slug, kick_slug, twitch_user_id, updated_at)
-            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            (twitch_slug, kick_slug, twitch_user_id, discord_channel_id, discord_user_id, updated_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         `;
-        return await this.db.run(sql, [twitchSlug.toLowerCase(), kickSlug.toLowerCase(), twitchUserId]);
+        return await this.db.run(sql, [twitchSlug.toLowerCase(), kickSlug.toLowerCase(), twitchUserId, discordChannelId, discordUserId]);
+    }
+
+    async setSyncDiscordTarget(twitchSlug, kickSlug, discordChannelId, discordUserId) {
+        const sql = `UPDATE twitch_kick_sync SET discord_channel_id = ?, discord_user_id = ? WHERE twitch_slug = ? AND kick_slug = ?`;
+        return await this.db.run(sql, [discordChannelId, discordUserId, twitchSlug.toLowerCase(), kickSlug.toLowerCase()]);
+    }
+
+    async getTwitchKickSyncById(id) {
+        return await this.db.get(`SELECT * FROM twitch_kick_sync WHERE id = ?`, [id]);
+    }
+
+    // Kick rejected the refresh token – drop it so /sync add issues a fresh authorization.
+    async clearSyncKickToken(id) {
+        const sql = `
+            UPDATE twitch_kick_sync
+            SET kick_access_token = NULL, kick_refresh_token = NULL, kick_token_expires_at = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        `;
+        return await this.db.run(sql, [id]);
     }
 
     async removeTwitchKickSync(twitchSlug, kickSlug) {

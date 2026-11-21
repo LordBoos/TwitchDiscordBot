@@ -213,6 +213,8 @@ CREATE TABLE IF NOT EXISTS twitch_kick_sync (
     kick_refresh_token TEXT,
     kick_token_expires_at DATETIME,
     kick_token_scope TEXT,
+    discord_channel_id TEXT,
+    discord_user_id TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(twitch_slug, kick_slug)

@@ -1,5 +1,6 @@
 const express = require('express');
 const crypto = require('crypto');
+const axios = require('axios');
 const logger = require('../utils/logger');
 const NotificationHandler = require('./notificationHandler');
 
@@ -59,6 +60,24 @@ class WebhookServer {
         // Kick OAuth callback endpoint (receives authorization code after user authorizes)
         this.app.get('/kick-auth/callback', (req, res) => {
             this.handleKickOAuthCallback(req, res);
+        });
+
+        // One-time Twitch authorization so the bot may post to Twitch chat with its app token
+        // (see TwitchAPI.sendChatMessage). Open it logged in as the chat sender, and once as
+        // the broadcaster if the sender is a separate bot account that isn't a moderator.
+        this.app.get('/twitch-chat-auth', (req, res) => {
+            const params = new URLSearchParams({
+                client_id: process.env.TWITCH_CLIENT_ID,
+                redirect_uri: this.twitchChatRedirectUri(),
+                response_type: 'code',
+                scope: 'user:write:chat user:bot channel:bot',
+                force_verify: 'true',
+            });
+            res.redirect(`https://id.twitch.tv/oauth2/authorize?${params}`);
+        });
+
+        this.app.get('/twitch-chat-auth/callback', (req, res) => {
+            this.handleTwitchChatAuthCallback(req, res);
         });
 
         // Catch-all for undefined routes
@@ -244,7 +263,16 @@ class WebhookServer {
 
             // Try the update — if combined title+category fails, retry with title only
             try {
-                await this.kickAPI.updateChannel(token, updates);
+                try {
+                    await this.kickAPI.updateChannel(token, updates);
+                } catch (error) {
+                    if (error.response?.status !== 401) throw error;
+                    // Kick revoked the access token before its expiry – refresh once and retry.
+                    logger.warn(`Sync ${twitchSlug}→${sync.kick_slug}: Kick rejected the access token (401), refreshing`);
+                    token = await this.kickAPI.refreshSyncToken(sync, { rejectedToken: token });
+                    if (!token) continue;
+                    await this.kickAPI.updateChannel(token, updates);
+                }
                 logger.info(`Sync ${twitchSlug}→${sync.kick_slug}: Kick channel updated — ${JSON.stringify(updates)}`);
             } catch (error) {
                 const detail = error.response
@@ -441,6 +469,43 @@ class WebhookServer {
         }
     }
 
+    twitchChatRedirectUri() {
+        const base = (process.env.WEBHOOK_URL || '').replace(/\/webhook\/?$/, '');
+        return `${base}/twitch-chat-auth/callback`;
+    }
+
+    async handleTwitchChatAuthCallback(req, res) {
+        const { code, error, error_description } = req.query;
+        if (error || !code) {
+            return res.status(400).send(`<html><body><h2>Authorization failed</h2><p>${escapeHtml(error_description || error || 'No code received')}</p></body></html>`);
+        }
+        try {
+            // Exchanging the code completes the grant; the user token itself is not needed –
+            // sending uses the app token once the grant exists.
+            const { data } = await axios.post('https://id.twitch.tv/oauth2/token', new URLSearchParams({
+                client_id: process.env.TWITCH_CLIENT_ID,
+                client_secret: process.env.TWITCH_CLIENT_SECRET,
+                code,
+                grant_type: 'authorization_code',
+                redirect_uri: this.twitchChatRedirectUri(),
+            }));
+            const { data: who } = await axios.get('https://id.twitch.tv/oauth2/validate', {
+                headers: { Authorization: `OAuth ${data.access_token}` },
+            });
+            logger.info(`Twitch chat authorization granted by ${who.login} (scopes: ${(who.scopes || []).join(' ')})`);
+            return res.send(
+                `<html><body style="font-family: system-ui; max-width: 500px; margin: 80px auto; text-align: center;">` +
+                `<h2 style="color: #9146FF;">Twitch chat authorized</h2>` +
+                `<p>The bot may now post to Twitch chat on behalf of / in the channel of <strong>${escapeHtml(who.login)}</strong>.</p>` +
+                `<p>You can close this window.</p></body></html>`
+            );
+        } catch (err) {
+            const detail = err.response ? `HTTP ${err.response.status}: ${JSON.stringify(err.response.data)}` : err.message;
+            logger.error(`Twitch chat authorization failed: ${detail}`);
+            return res.status(500).send(`<html><body><h2>Authorization failed</h2><p>${escapeHtml(detail)}</p></body></html>`);
+        }
+    }
+
     async handleSyncOAuthCallback(code, state, res) {
         try {
             const result = await this.kickAPI.exchangeSyncCodeForToken(code, state);
@@ -503,3 +568,6 @@ class WebhookServer {
 }
 
 module.exports = WebhookServer;
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}

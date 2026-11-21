@@ -29,6 +29,13 @@ class KickAPI {
         // Keyed by state string → { codeVerifier, twitchSlug, kickSlug, createdAt }
         this.pendingSyncPKCE = new Map();
 
+        // In-flight sync token refreshes keyed by twitch_kick_sync.id (see refreshSyncToken)
+        this.syncRefreshInFlight = new Map();
+
+        // async (syncRow) => void – set by the bot to tell the streamer that Kick
+        // authorization for a sync pair is gone and /sync add must be run again.
+        this.onSyncAuthLost = null;
+
         // Category cache for Twitch→Kick category mapping
         this.categoryCache = null;
         this.categoryCacheExpiry = 0;
@@ -821,12 +828,38 @@ class KickAPI {
     }
 
     /**
-     * Refresh a sync-specific token using its refresh_token.
-     * Returns the new access token or null on failure.
+     * Refresh a sync pair's token. Returns the new access token, or null when unavailable.
+     *
+     * Serialized per pair: Kick rotates refresh tokens, so two concurrent refreshes with
+     * the same refresh token would burn the grant. A refresh token Kick rejects (4xx,
+     * typically 401 invalid_grant) never recovers – the tokens are cleared and
+     * onSyncAuthLost(row) fires so the streamer can be told to re-authorize.
+     *
+     * @param {object} syncRow - twitch_kick_sync row (may be stale, it is re-read)
+     * @param {string|null} opts.rejectedToken - access token Kick just refused; forces a
+     *        refresh unless the stored token has already been rotated by someone else
+     * @param {number} opts.unlessValidFor - skip the refresh while the stored token stays
+     *        valid at least this long (ms)
      */
-    async refreshSyncToken(syncRow) {
-        if (!syncRow.kick_refresh_token) return null;
+    refreshSyncToken(syncRow, { rejectedToken = null, unlessValidFor = 5 * 60 * 1000 } = {}) {
+        const id = syncRow.id;
+        if (!this.syncRefreshInFlight.has(id)) {
+            const pending = this._refreshSyncToken(id, rejectedToken, unlessValidFor)
+                .finally(() => this.syncRefreshInFlight.delete(id));
+            this.syncRefreshInFlight.set(id, pending);
+        }
+        return this.syncRefreshInFlight.get(id);
+    }
 
+    async _refreshSyncToken(id, rejectedToken, unlessValidFor) {
+        // The caller's row may predate a refresh that already rotated the refresh token.
+        const row = await this.models.getTwitchKickSyncById(id);
+        if (!row?.kick_refresh_token) return null;
+        if (row.kick_access_token !== rejectedToken && msUntilExpiry(row) > unlessValidFor) {
+            return row.kick_access_token;
+        }
+
+        const pair = `${row.twitch_slug}→${row.kick_slug}`;
         try {
             const response = await axios.post(
                 `${this.oauthUrl}/oauth/token`,
@@ -834,23 +867,39 @@ class KickAPI {
                     grant_type: 'refresh_token',
                     client_id: this.clientId,
                     client_secret: this.clientSecret,
-                    refresh_token: syncRow.kick_refresh_token,
+                    refresh_token: row.kick_refresh_token,
                 }),
-                { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+                { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000 }
             );
 
             const { access_token, refresh_token, expires_in, scope } = response.data;
             const expiresAt = new Date(Date.now() + expires_in * 1000);
 
             await this.models.saveSyncKickToken(
-                syncRow.twitch_slug, syncRow.kick_slug,
-                access_token, refresh_token, expiresAt, scope || null
+                row.twitch_slug, row.kick_slug,
+                access_token, refresh_token || row.kick_refresh_token, expiresAt, scope || row.kick_token_scope
             );
 
-            logger.info(`Kick sync token refreshed for ${syncRow.twitch_slug}→${syncRow.kick_slug}`);
+            logger.info(`Kick sync token refreshed for ${pair} (valid until ${expiresAt.toISOString()})`);
             return access_token;
         } catch (error) {
-            logger.error(`Failed to refresh sync token for ${syncRow.twitch_slug}→${syncRow.kick_slug}:`, error.message);
+            const status = error.response?.status;
+            const detail = status ? `HTTP ${status}: ${JSON.stringify(error.response.data)}` : (error.code || error.message);
+
+            if (status >= 400 && status < 500 && status !== 429) {
+                logger.error(`Kick rejected the sync refresh token for ${pair} (${detail}) – authorization cleared, /sync add needed`);
+                await this.models.clearSyncKickToken(id);
+                if (this.onSyncAuthLost) {
+                    try {
+                        await this.onSyncAuthLost(row);
+                    } catch (notifyError) {
+                        logger.error(`Failed to report lost Kick authorization for ${pair}:`, notifyError);
+                    }
+                }
+            } else {
+                // Network error / 5xx / rate limit: keep the token, the next attempt may succeed.
+                logger.warn(`Transient failure refreshing Kick sync token for ${pair}: ${detail}`);
+            }
             return null;
         }
     }
@@ -861,14 +910,35 @@ class KickAPI {
      */
     async getSyncToken(syncRow) {
         if (!syncRow.kick_access_token) return null;
+        if (msUntilExpiry(syncRow) > 5 * 60 * 1000) return syncRow.kick_access_token;
+        return this.refreshSyncToken(syncRow);
+    }
 
-        const expiresAt = new Date(syncRow.kick_token_expires_at);
-        if ((expiresAt - Date.now()) > 5 * 60 * 1000) {
-            return syncRow.kick_access_token;
+    /**
+     * Refresh every sync token that expires within `withinMs`. Run periodically, so
+     * refresh tokens are exercised every ~2 h (Kick access tokens live 2 h) instead of
+     * only when Twitch sends channel.update – a refresh token left unused for a few
+     * days was observed to be rejected with 401 invalid_grant. Also surfaces a dead
+     * authorization before the stream starts rather than at the first title change.
+     */
+    async refreshExpiringSyncTokens(withinMs = 45 * 60 * 1000) {
+        if (!this.hasCredentials) return;
+
+        const syncs = await this.models.getAllTwitchKickSyncs();
+        for (const sync of syncs) {
+            if (sync.kick_refresh_token && !(msUntilExpiry(sync) > withinMs)) {
+                await this.refreshSyncToken(sync, { unlessValidFor: withinMs });
+            }
         }
 
-        // Token expired — try refreshing
-        return this.refreshSyncToken(syncRow);
+        // Same idea for the /kickauth user token (webhook subscriptions).
+        if (this.hasUserToken) {
+            try {
+                await this.ensureUserToken();
+            } catch (error) {
+                logger.warn(`Kick user token refresh check failed: ${error.message}`);
+            }
+        }
     }
 
     // =========================================================================
@@ -988,6 +1058,11 @@ class KickAPI {
             logger.error('Kick: error subscribing existing follows:', error.message);
         }
     }
+}
+
+// NaN (missing expiry) compares false everywhere, so such a token is treated as expired.
+function msUntilExpiry(syncRow) {
+    return new Date(syncRow.kick_token_expires_at) - Date.now();
 }
 
 module.exports = KickAPI;

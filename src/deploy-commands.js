@@ -33,13 +33,10 @@ const client = new Client({
     try {
         console.log(`Started refreshing ${commands.length} application (/) commands.`);
 
-        // Deploy commands globally for all guilds
-        console.log('Deploying commands globally...');
-        const globalData = await rest.put(
-            Routes.applicationCommands(process.env.DISCORD_CLIENT_ID),
-            { body: commands },
-        );
-        console.log(`✅ Successfully deployed ${globalData.length} global commands (will propagate in ~1 hour)`);
+        // Commands live per guild only (same as the bot does on startup) – a global copy
+        // would show every command twice next to the guild copy.
+        console.log('Clearing global commands...');
+        await rest.put(Routes.applicationCommands(process.env.DISCORD_CLIENT_ID), { body: [] });
 
         // Login to Discord to fetch guilds
         console.log('Logging in to fetch guild list...');
@@ -81,7 +78,6 @@ const client = new Client({
         client.destroy();
 
         console.log('\n📊 Deployment Summary:');
-        console.log(`✅ Global deployment: Success (will propagate in ~1 hour)`);
         console.log(`✅ Guild deployments: ${successCount}/${guilds.size} successful`);
         if (errorCount > 0) {
             console.log(`❌ Failed deployments: ${errorCount}`);

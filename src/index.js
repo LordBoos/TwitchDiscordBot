@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Collection, REST, Routes } = require('discord.js');
+const { Client, GatewayIntentBits, Collection, Routes } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const logger = require('./utils/logger');
@@ -22,6 +22,7 @@ class TwitchDiscordBot {
         this.models = new Models();
         this.twitchAPI = new TwitchAPI(this.models);
         this.kickAPI = new KickAPI(this.models);
+        this.kickAPI.onSyncAuthLost = (sync) => this.notifySyncAuthLost(sync);
         this.webhookServer = new WebhookServer(this.models, this.twitchAPI, this, this.kickAPI);
 
         // Initialize polling services (started after bot is ready)
@@ -60,8 +61,12 @@ class TwitchDiscordBot {
             logger.info(`Bot is ready! Logged in as ${this.client.user.tag}`);
             this.client.user.setActivity('Twitch streams', { type: 'WATCHING' });
 
-            // Deploy commands on startup
+            // Deploy commands on startup and restore them if another client deletes them
             await this.deployCommands();
+            this.startCommandHealthCheck();
+
+            // Refresh Kick sync tokens ahead of expiry; reports dead authorizations
+            this.startKickTokenRefresh();
 
             // Clean up orphaned EventSub subscriptions
             await this.twitchAPI.cleanupOrphanedSubscriptions();
@@ -111,6 +116,11 @@ class TwitchDiscordBot {
             }
         });
 
+        this.client.on('guildCreate', (guild) => {
+            logger.info(`Joined guild ${guild.name} – deploying commands`);
+            this.deployGuildCommands(guild);
+        });
+
         this.client.on('error', (error) => {
             logger.error('Discord client error:', error);
         });
@@ -148,59 +158,131 @@ class TwitchDiscordBot {
         }
     }
 
+    commandsJSON() {
+        return this.client.commands.map(command => command.data.toJSON());
+    }
+
+    // Commands are registered per guild only: instant availability, and no duplicate
+    // entries that a global + guild copy of the same command would show.
     async deployCommands() {
+        const commands = this.commandsJSON();
+        logger.info(`🔄 Deploying ${commands.length} Discord commands to ${this.client.guilds.cache.size} guild(s)...`);
+
         try {
-            logger.info('🔄 Deploying Discord commands...');
+            await this.client.rest.put(Routes.applicationCommands(process.env.DISCORD_CLIENT_ID), { body: [] });
+        } catch (error) {
+            logger.error('Failed to clear global Discord commands:', error.message);
+        }
 
-            // Collect all commands
-            const commands = [];
-            for (const [name, command] of this.client.commands) {
-                commands.push(command.data.toJSON());
-            }
+        for (const guild of this.client.guilds.cache.values()) {
+            await this.deployGuildCommands(guild, commands);
+        }
+    }
 
-            logger.info(`📋 Collected ${commands.length} commands for deployment`);
-
-            const rest = new REST().setToken(process.env.DISCORD_TOKEN);
-
-            // Deploy commands globally for long-term stability
-            logger.info(`Deploying ${commands.length} commands globally...`);
-            await rest.put(
-                Routes.applicationCommands(process.env.DISCORD_CLIENT_ID),
+    async deployGuildCommands(guild, commands = this.commandsJSON()) {
+        try {
+            await this.client.rest.put(
+                Routes.applicationGuildCommands(process.env.DISCORD_CLIENT_ID, guild.id),
                 { body: commands }
             );
-            logger.info(`✅ Successfully deployed ${commands.length} global commands`);
-
-            // Also deploy to guilds for immediate availability
-            const guilds = this.client.guilds.cache;
-            if (guilds.size > 0) {
-                logger.info(`Deploying ${commands.length} commands to ${guilds.size} guilds for immediate availability...`);
-
-                let successCount = 0;
-                let errorCount = 0;
-
-                for (const [guildId, guild] of guilds) {
-                    try {
-                        // Deploy commands to guild for immediate availability
-                        await rest.put(
-                            Routes.applicationGuildCommands(process.env.DISCORD_CLIENT_ID, guildId),
-                            { body: commands }
-                        );
-                        successCount++;
-                        logger.info(`  ✅ Deployed ${commands.length} commands to ${guild.name}`);
-                    } catch (error) {
-                        errorCount++;
-                        logger.error(`  ❌ Failed to deploy to ${guild.name}:`, error.message);
-                    }
-                }
-
-                logger.info(`📊 Guild command deployment complete: ${successCount}/${guilds.size} guilds successful`);
-                if (errorCount > 0) {
-                    logger.warn(`⚠️ ${errorCount} guild deployments failed`);
-                }
-            }
-
+            logger.info(`  ✅ Deployed ${commands.length} commands to ${guild.name}`);
         } catch (error) {
-            logger.error('Failed to deploy commands:', error);
+            logger.error(`  ❌ Failed to deploy commands to ${guild.name}:`, error.message);
+        }
+    }
+
+    /**
+     * Re-deploy guild commands that disappeared. Another client logged in with the same
+     * bot token can delete them – e.g. a nextcord bot with its default command rollout
+     * removes every command it doesn't define (seen with the discord_game HA integration).
+     */
+    async ensureGuildCommands() {
+        const commands = this.commandsJSON();
+        const expected = commands.map(c => c.name).sort().join(',');
+
+        for (const guild of this.client.guilds.cache.values()) {
+            try {
+                const registered = await this.client.rest.get(
+                    Routes.applicationGuildCommands(process.env.DISCORD_CLIENT_ID, guild.id)
+                );
+                if (registered.map(c => c.name).sort().join(',') !== expected) {
+                    logger.warn(`Discord commands in ${guild.name} are missing or outdated (${registered.length}/${commands.length}) – re-deploying`);
+                    await this.deployGuildCommands(guild, commands);
+                }
+            } catch (error) {
+                logger.error(`Failed to check Discord commands in ${guild.name}:`, error.message);
+            }
+        }
+    }
+
+    startCommandHealthCheck() {
+        this.commandHealthCheckInterval = setInterval(() => this.ensureGuildCommands(), 10 * 60 * 1000);
+    }
+
+    // Keep Kick sync refresh tokens in use and detect a dead authorization early.
+    startKickTokenRefresh() {
+        if (!this.kickAPI.hasCredentials) return;
+
+        const run = () => this.kickAPI.refreshExpiringSyncTokens()
+            .catch(error => logger.error('Kick token refresh check failed:', error));
+        run();
+        this.kickTokenRefreshInterval = setInterval(run, 30 * 60 * 1000);
+    }
+
+    /**
+     * Kick rejected a sync pair's refresh token: tell the streamer in Discord (channel
+     * where /sync add was run, else the channels following that Twitch streamer) and in
+     * their Twitch chat how to re-authorize.
+     */
+    async notifySyncAuthLost(sync) {
+        const fixCommand = `/sync add twitch:${sync.twitch_slug} kick:${sync.kick_slug}`;
+        const pair = `${sync.twitch_slug} → ${sync.kick_slug}`;
+
+        const channelIds = sync.discord_channel_id
+            ? [sync.discord_channel_id]
+            : [...new Set((await this.models.getAllFollowsForStreamer(sync.twitch_slug)).map(f => f.channel_id))];
+
+        const mention = sync.discord_user_id ? `<@${sync.discord_user_id}> ` : '';
+        const discordText = [
+            `${mention}⚠️ **Twitch → Kick sync stopped: ${pair}**`,
+            `Kick no longer accepts the bot's login for **${sync.kick_slug}** (it expired or was revoked), ` +
+            'so stream title and category changes on Twitch are not copied to Kick anymore.',
+            '',
+            '**How to fix it:**',
+            `1. Run \`${fixCommand}\` here in Discord (needs Administrator).`,
+            '2. Click **Authorize on Kick** in the bot\'s reply.',
+            `3. Log in with the Kick account **${sync.kick_slug}** and confirm. The bot then replies "Sync authorized" and syncing resumes.`,
+            '',
+            'The authorization link is valid for 10 minutes – if it expires, just run the command again.',
+        ].join('\n');
+
+        if (channelIds.length === 0) {
+            logger.warn(`No Discord channel known for sync ${pair} – lost Kick authorization not reported in Discord`);
+        }
+        for (const channelId of channelIds) {
+            try {
+                const channel = await this.client.channels.fetch(channelId);
+                await channel.send({
+                    content: discordText,
+                    allowedMentions: { users: sync.discord_user_id ? [sync.discord_user_id] : [] },
+                });
+                logger.info(`Reported lost Kick authorization for ${pair} in Discord channel ${channelId}`);
+            } catch (error) {
+                logger.error(`Failed to report lost Kick authorization in Discord channel ${channelId}:`, error.message);
+            }
+        }
+
+        if (!sync.twitch_user_id) return;
+        try {
+            await this.twitchAPI.sendChatMessage(
+                sync.twitch_user_id,
+                `⚠️ Twitch → Kick title/category sync for kick.com/${sync.kick_slug} stopped: the Kick login expired. ` +
+                `Fix: in Discord run ${fixCommand} and log in to Kick (account ${sync.kick_slug}) via the link the bot replies with.`
+            );
+            logger.info(`Reported lost Kick authorization for ${pair} in Twitch chat of ${sync.twitch_slug}`);
+        } catch (error) {
+            const detail = error.response ? `HTTP ${error.response.status}: ${JSON.stringify(error.response.data)}` : error.message;
+            logger.warn(`Could not post to Twitch chat of ${sync.twitch_slug} (one-time authorization via /twitch-chat-auth needed?): ${detail}`);
         }
     }
 
@@ -250,11 +332,10 @@ class TwitchDiscordBot {
         logger.info('Shutting down bot...');
 
         try {
-            // Stop the EventSub health check interval
-            if (this.subscriptionHealthCheckInterval) {
-                clearInterval(this.subscriptionHealthCheckInterval);
-                this.subscriptionHealthCheckInterval = null;
-            }
+            // Stop periodic checks
+            clearInterval(this.subscriptionHealthCheckInterval);
+            clearInterval(this.commandHealthCheckInterval);
+            clearInterval(this.kickTokenRefreshInterval);
 
             // Stop Twitch clip polling service
             if (this.clipPollingService) {

@@ -226,6 +226,19 @@ class Database {
 
             });
 
+            // twitch_kick_sync: where to report a dead Kick authorization (channel + user who ran /sync add)
+            this.db.all("PRAGMA table_info(twitch_kick_sync)", (syncErr, syncInfo) => {
+                if (syncErr || !syncInfo || syncInfo.length === 0) return; // new DBs get the columns from schema.sql
+                const cols = syncInfo.map(col => col.name);
+                for (const col of ['discord_channel_id', 'discord_user_id']) {
+                    if (cols.includes(col)) continue;
+                    logger.info(`Running migration: Adding ${col} column to twitch_kick_sync`);
+                    this.db.run(`ALTER TABLE twitch_kick_sync ADD COLUMN ${col} TEXT`, (e) => {
+                        if (e) logger.error(`Migration failed for twitch_kick_sync.${col}:`, e);
+                    });
+                }
+            });
+
             // ---- Kick tables migration ----
             // Create all Kick tables if they don't already exist (the schema.sql
             // handles new installs; this migration covers existing databases).

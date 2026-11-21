@@ -150,6 +150,39 @@ class TwitchAPI {
         }
     }
 
+    /**
+     * Send a message to a broadcaster's Twitch chat with the app access token.
+     * Sender is TWITCH_CHAT_BOT_LOGIN, or the broadcaster when unset. Twitch accepts it
+     * only after a one-time authorization: the sender grants user:write:chat + user:bot,
+     * and the broadcaster grants channel:bot unless the sender is them or a moderator
+     * (both via /twitch-chat-auth on the webhook server).
+     */
+    async sendChatMessage(broadcasterId, message) {
+        const botLogin = process.env.TWITCH_CHAT_BOT_LOGIN;
+        const senderId = botLogin ? (await this.getUserByName(botLogin))?.id : broadcasterId;
+        if (!senderId) throw new Error(`TWITCH_CHAT_BOT_LOGIN "${botLogin}" not found on Twitch`);
+
+        if (!this.tokenExpiresAt || new Date() >= this.tokenExpiresAt) await this.refreshAccessToken();
+
+        const response = await axios.post(`${this.baseURL}/chat/messages`, {
+            broadcaster_id: broadcasterId,
+            sender_id: senderId,
+            message: message.slice(0, 500),
+        }, {
+            headers: {
+                'Client-ID': this.clientId,
+                'Authorization': `Bearer ${this.accessToken}`,
+                'Content-Type': 'application/json',
+            },
+            timeout: 10000,
+        });
+
+        const result = response.data?.data?.[0];
+        if (result && !result.is_sent) {
+            throw new Error(`Twitch dropped the chat message: ${JSON.stringify(result.drop_reason)}`);
+        }
+    }
+
     // Get user information by ID
     async getUserById(userId) {
         try {

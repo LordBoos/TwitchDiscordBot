@@ -71,9 +71,14 @@ module.exports = {
         }
 
         // Check if sync pair already exists
+        // Running /sync add also (re)sets where a lost Kick authorization gets reported.
         const existing = await models.getTwitchKickSync(twitchSlug, kickSlug);
-        if (existing?.kick_access_token) {
-            return interaction.editReply(`✅ Sync **${twitchSlug}** → **${kickSlug}** is already active and authorized.`);
+        if (existing?.kick_refresh_token && new Date(existing.kick_token_expires_at) > Date.now()) {
+            await models.setSyncDiscordTarget(twitchSlug, kickSlug, interaction.channelId, interaction.user.id);
+            return interaction.editReply(
+                `✅ Sync **${twitchSlug}** → **${kickSlug}** is already active and authorized.\n` +
+                'If the Kick authorization is ever lost, I will report it in this channel.'
+            );
         }
 
         // Look up the Twitch user to get their broadcaster ID
@@ -89,7 +94,7 @@ module.exports = {
         }
 
         // Create or update the sync pair in the database (without token — token comes after OAuth)
-        await models.addTwitchKickSync(twitchSlug, kickSlug, twitchUser.id);
+        await models.addTwitchKickSync(twitchSlug, kickSlug, twitchUser.id, interaction.channelId, interaction.user.id);
 
         // Subscribe to Twitch channel.update EventSub
         try {
