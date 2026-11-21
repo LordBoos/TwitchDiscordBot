@@ -74,6 +74,24 @@ describe('Kick sync token refresh', () => {
         expect(lost).toEqual([]);
     });
 
+    test('re-running /sync add keeps the notices, successful re-authorization deletes them', async () => {
+        const notices = JSON.stringify([{ channelId: 'chan', messageId: 'm1' }]);
+        await models.setSyncAuthNotices((await row()).id, notices);
+        await models.addTwitchKickSync('jenna', 'jenna13', '119', 'chan2', 'user2');
+        const readded = await row();
+        expect(readded.discord_notice_messages).toBe(notices);
+        expect(readded.discord_channel_id).toBe('chan2');
+
+        const WebhookServer = require('../src/handlers/webhookServer');
+        const deleted = [];
+        const bot = { deleteSyncAuthNotices: async (s) => { deleted.push(s.discord_notice_messages); } };
+        const kickStub = { exchangeSyncCodeForToken: async () => ({ twitchSlug: 'jenna', kickSlug: 'jenna13' }) };
+        const server = new WebhookServer(models, {}, bot, kickStub);
+        const res = { status() { return this; }, send() { return this; } };
+        await server.handleSyncOAuthCallback('code', 'state', res);
+        expect(deleted).toEqual([notices]);
+    });
+
     test('channel.update for an unauthorized pair reminds in Twitch chat, rate-limited', async () => {
         const WebhookServer = require('../src/handlers/webhookServer');
         const reminders = [];

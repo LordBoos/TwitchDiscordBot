@@ -608,10 +608,19 @@ class Models {
     // =========================================================================
 
     async addTwitchKickSync(twitchSlug, kickSlug, twitchUserId = null, discordChannelId = null, discordUserId = null) {
+        // Upsert, not INSERT OR REPLACE: re-running /sync add must keep discord_notice_messages
+        // until the new authorization deletes those notices. created_at is reset on purpose –
+        // it marks the latest authorization (logged when Kick later rejects the token).
         const sql = `
-            INSERT OR REPLACE INTO twitch_kick_sync
+            INSERT INTO twitch_kick_sync
             (twitch_slug, kick_slug, twitch_user_id, discord_channel_id, discord_user_id, updated_at)
             VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(twitch_slug, kick_slug) DO UPDATE SET
+                twitch_user_id = excluded.twitch_user_id,
+                discord_channel_id = excluded.discord_channel_id,
+                discord_user_id = excluded.discord_user_id,
+                created_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
         `;
         return await this.db.run(sql, [twitchSlug.toLowerCase(), kickSlug.toLowerCase(), twitchUserId, discordChannelId, discordUserId]);
     }
@@ -619,6 +628,11 @@ class Models {
     async setSyncDiscordTarget(twitchSlug, kickSlug, discordChannelId, discordUserId) {
         const sql = `UPDATE twitch_kick_sync SET discord_channel_id = ?, discord_user_id = ? WHERE twitch_slug = ? AND kick_slug = ?`;
         return await this.db.run(sql, [discordChannelId, discordUserId, twitchSlug.toLowerCase(), kickSlug.toLowerCase()]);
+    }
+
+    // JSON [{ channelId, messageId }] of the Discord "sync stopped" notices, or null
+    async setSyncAuthNotices(id, noticesJson) {
+        return await this.db.run(`UPDATE twitch_kick_sync SET discord_notice_messages = ? WHERE id = ?`, [noticesJson, id]);
     }
 
     async getTwitchKickSyncById(id) {

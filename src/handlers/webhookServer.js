@@ -522,6 +522,11 @@ class WebhookServer {
 
             logger.info(`Kick sync OAuth callback: token obtained for ${result.twitchSlug}→${result.kickSlug}`);
 
+            const sync = await this.models.getTwitchKickSync(result.twitchSlug, result.kickSlug);
+            if (sync && this.discordBot?.deleteSyncAuthNotices) {
+                await this.discordBot.deleteSyncAuthNotices(sync);
+            }
+
             // Update the original Discord message to show success
             if (result.interaction) {
                 try {

@@ -259,20 +259,42 @@ class TwitchDiscordBot {
         if (channelIds.length === 0) {
             logger.warn(`No Discord channel known for sync ${pair} – lost Kick authorization not reported in Discord`);
         }
+        // Remember the notices so a successful re-authorization can delete them.
+        const notices = JSON.parse(sync.discord_notice_messages || '[]');
         for (const channelId of channelIds) {
             try {
                 const channel = await this.client.channels.fetch(channelId);
-                await channel.send({
+                const message = await channel.send({
                     content: discordText,
                     allowedMentions: { users: sync.discord_user_id ? [sync.discord_user_id] : [] },
                 });
+                notices.push({ channelId, messageId: message.id });
                 logger.info(`Reported lost Kick authorization for ${pair} in Discord channel ${channelId}`);
             } catch (error) {
                 logger.error(`Failed to report lost Kick authorization in Discord channel ${channelId}:`, error.message);
             }
         }
+        await this.models.setSyncAuthNotices(sync.id, notices.length ? JSON.stringify(notices) : null);
 
         await this.remindSyncAuthInTwitchChat(sync);
+    }
+
+    // The pair is authorized again – the "sync stopped" notices in Discord are obsolete.
+    async deleteSyncAuthNotices(sync) {
+        const notices = JSON.parse(sync.discord_notice_messages || '[]');
+        for (const { channelId, messageId } of notices) {
+            try {
+                const channel = await this.client.channels.fetch(channelId);
+                await channel.messages.delete(messageId);
+                logger.info(`Deleted Kick re-authorization notice ${messageId} in Discord channel ${channelId}`);
+            } catch (error) {
+                // 10008 Unknown Message: someone already deleted it
+                if (error.code !== 10008) {
+                    logger.warn(`Could not delete Kick re-authorization notice ${messageId} in channel ${channelId}: ${error.message}`);
+                }
+            }
+        }
+        if (notices.length) await this.models.setSyncAuthNotices(sync.id, null);
     }
 
     /**

@@ -230,7 +230,7 @@ class Database {
             this.db.all("PRAGMA table_info(twitch_kick_sync)", (syncErr, syncInfo) => {
                 if (syncErr || !syncInfo || syncInfo.length === 0) return; // new DBs get the columns from schema.sql
                 const cols = syncInfo.map(col => col.name);
-                for (const col of ['discord_channel_id', 'discord_user_id']) {
+                for (const col of ['discord_channel_id', 'discord_user_id', 'discord_notice_messages']) {
                     if (cols.includes(col)) continue;
                     logger.info(`Running migration: Adding ${col} column to twitch_kick_sync`);
                     this.db.run(`ALTER TABLE twitch_kick_sync ADD COLUMN ${col} TEXT`, (e) => {
